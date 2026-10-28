@@ -38,6 +38,8 @@ jobs:
             xz
             mingw-w64-ucrt-x86_64-gcc
       - name: Build and verify macOS release
+        # Native builds exercise cgo and platform libraries; a pure-Go cross
+        # compile would not validate the FFmpeg backend or relinking materials.
         if: runner.os == 'macOS'
         run: bash scripts/build-macos.sh
       - name: Build and verify Windows release
@@ -49,4 +51,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: hdma2truehd-${{ matrix.os }}-with-relink-materials
+          # Distribute the whole release, not an executable without LGPL inputs.
           path: dist/

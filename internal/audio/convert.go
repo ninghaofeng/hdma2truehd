@@ -10,10 +10,13 @@ import (
 )
 
 type Options struct {
-	Overwrite  bool
+	Overwrite bool
+	// SkipVerify skips only full decoding/comparison, not output format checks.
 	SkipVerify bool
 }
 
+// Result describes a published output. Samples is populated only after full
+// PCM verification; a successful unverified encode leaves it at zero.
 type Result struct {
 	Input    string
 	Output   string
@@ -21,6 +24,8 @@ type Result struct {
 	Samples  uint64
 }
 
+// Convert encodes to a private file, validates it and only then publishes it.
+// A codec or verification failure must not expose a partial final output.
 func (b Backend) Convert(ctx context.Context, input, output string, options Options) (result Result, err error) {
 	if err := b.Check(ctx); err != nil {
 		return Result{}, err
@@ -44,6 +49,8 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 		return Result{}, err
 	}
 	if outputStat, statErr := os.Stat(output); statErr == nil {
+		// Different path strings may still name the same inode via hard links
+		// or symlinks. Overwrite permission never allows replacing the source.
 		if os.SameFile(inputStat, outputStat) {
 			return Result{}, fmt.Errorf("input and output refer to the same file")
 		}
@@ -56,11 +63,15 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return Result{}, statErr
 	}
+	// Stage on the destination filesystem so rename/hard-link publication
+	// does not need a cross-filesystem copy that could leave a partial output.
 	tempDir, err := os.MkdirTemp(filepath.Dir(output), ".hdma2truehd-")
 	if err != nil {
 		return Result{}, err
 	}
 	defer func() {
+		// Join cleanup errors into the named return even after publication;
+		// callers must not be told that leftover private files were cleaned.
 		if cleanupErr := os.RemoveAll(tempDir); cleanupErr != nil {
 			err = errors.Join(err, fmt.Errorf("clean up %s: %w", tempDir, cleanupErr))
 		}
@@ -78,6 +89,8 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 	}
 	result = Result{Input: source.Path, Output: output}
 	if !options.SkipVerify {
+		// Metadata alone cannot detect truncation, changed low bits or channel
+		// swaps. Decode both complete streams before committing the output.
 		originalPCM, err := b.Digest(ctx, source)
 		if err != nil {
 			return Result{}, err
@@ -95,6 +108,8 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
+	// Flush file contents before making the final name visible. This does not
+	// promise directory-entry durability across a sudden power failure.
 	file, err := os.OpenFile(temp, os.O_RDWR, 0)
 	if err != nil {
 		return Result{}, err
@@ -104,6 +119,9 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 	if err := errors.Join(syncErr, closeErr); err != nil {
 		return Result{}, err
 	}
+	// Without overwrite, Link creates the final name only if still absent,
+	// closing the race with the earlier existence check. Cleanup removes the
+	// private name, not the published link. Replacement uses the OS primitive.
 	if options.Overwrite {
 		if err := replaceFile(temp, output); err != nil {
 			return Result{}, fmt.Errorf("publish output: %w", err)

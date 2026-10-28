@@ -22,6 +22,9 @@ type Stream struct {
 	RawBits       string `json:"bits_per_raw_sample"`
 }
 
+// Info keeps codec/container metadata alongside parsed values used to enforce
+// the conversion contract. Bits is effective precision, not the int32 storage
+// width used internally while decoding.
 type Info struct {
 	Path   string `json:"path"`
 	Stream Stream `json:"stream"`
@@ -44,6 +47,8 @@ func localFile(path string) (string, error) {
 	return absolute, nil
 }
 
+// Probe reports metadata but does not assert that a file is a supported source:
+// it is also used to inspect generated TrueHD and synthetic PCM fixtures.
 func (b Backend) Probe(ctx context.Context, path string) (Info, error) {
 	if b.probe != nil {
 		return b.probe(ctx, path)
@@ -63,6 +68,9 @@ func (b Backend) Probe(ctx context.Context, path string) (Info, error) {
 }
 
 func (i Info) ValidateSource() error {
+	// Match confirmed lossless profiles exactly; a generic "DTS:X" label is
+	// not proof of MA. Accepted X profiles still use only compatible channels,
+	// without parsing objects or rendering the spatial extension.
 	if i.Stream.Codec != "dts" || (i.Stream.Profile != "DTS-HD MA" &&
 		i.Stream.Profile != "DTS-HD MA + DTS:X" && i.Stream.Profile != "DTS-HD MA + DTS:X IMAX") {
 		return fmt.Errorf("%s: expected confirmed DTS-HD MA (including DTS:X/IMAX compatible channels), got codec=%q profile=%q; DTS core/HRA are not lossless MA", i.Path, i.Stream.Codec, i.Stream.Profile)
@@ -71,6 +79,8 @@ func (i Info) ValidateSource() error {
 }
 
 func (i Info) validateFormat() error {
+	// Channel counts alone do not identify speaker positions: rear 5.1 and
+	// side 5.1 must remain distinct, and 7.1(wide) is not canonical 7.1.
 	channels := 0
 	switch i.Stream.Layout {
 	case "5.1(side)", "5.1":
@@ -103,6 +113,8 @@ func matchingOutput(source, output Info) error {
 			source.Rate, source.Stream.Layout, source.Stream.Channels,
 			output.Rate, output.Stream.Layout, output.Stream.Channels)
 	}
+	// TrueHD may report 24 effective bits for a 16-bit source. Widening is
+	// allowed; full PCM comparison still requires the added low bits to be zero.
 	if output.Bits < source.Bits || output.Bits > 24 {
 		return fmt.Errorf("output effective precision %d cannot preserve source precision %d", output.Bits, source.Bits)
 	}

@@ -106,6 +106,8 @@ func digest(t *testing.T, data []byte, chunks int) PCM {
 func TestPCMDigest(t *testing.T) {
 	data := pcmData(8, 17)
 	expected := digest(t, data, len(data))
+	// Fragment both int32 words and multichannel frames; callback chunking
+	// must not affect channel assignment or the final fingerprints.
 	for _, size := range []int{1, 3, 4, 7, 31, 32, 127} {
 		if err := ComparePCM(expected, digest(t, data, size)); err != nil {
 			t.Fatal(err)
@@ -115,6 +117,8 @@ func TestPCMDigest(t *testing.T) {
 		t.Fatal("accepted truncation")
 	}
 	changed := bytes.Clone(data)
+	// The first byte is padding, so byte 1 contains the lowest effective
+	// 24-bit precision. A one-bit change must not survive verification.
 	changed[1] ^= 1
 	if err := ComparePCM(expected, digest(t, changed, 31)); err == nil {
 		t.Fatal("accepted loss of low effective bit")
@@ -166,6 +170,8 @@ func TestMatchingOutput(t *testing.T) {
 }
 
 func TestConvert(t *testing.T) {
+	// Inject codec outcomes to isolate publication semantics. Actual native
+	// signal fidelity is covered separately by the integration round trips.
 	for _, profile := range []string{"DTS-HD MA", "DTS-HD MA + DTS:X", "DTS-HD MA + DTS:X IMAX"} {
 		for _, layout := range []string{"5.1", "5.1(side)", "7.1"} {
 			t.Run(profile+"/"+layout, func(t *testing.T) {
@@ -253,6 +259,8 @@ func TestConvert(t *testing.T) {
 							}
 						}
 						leftovers, err := filepath.Glob(filepath.Join(dir, ".hdma2truehd-*"))
+						// Cleanup is required on success, rejection, codec failure
+						// and cancellation, not just on the normal verified path.
 						if err != nil || len(leftovers) != 0 {
 							t.Fatalf("temporary files remain: %v %v", leftovers, err)
 						}

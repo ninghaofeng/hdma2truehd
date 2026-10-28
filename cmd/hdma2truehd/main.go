@@ -39,6 +39,8 @@ No upmixing, downmixing, resampling, Atmos, or MKV processing.
 `
 
 func main() {
+	// Signal cancellation reaches FFmpeg's I/O interrupt and frame-processing
+	// checks; per-operation cleanup runs before run returns its exit code.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
@@ -68,6 +70,8 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		flags.BoolVar(&overwrite, "overwrite", false, "replace existing outputs")
 		flags.BoolVar(&skipVerify, "skip-verify", false, "skip full PCM comparison")
 	}
+	// flag stops at the first positional argument. planJobs rejects later
+	// option-looking paths rather than silently treating misplaced flags as files.
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -109,6 +113,8 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(out, "Not a DTS-HD MA fixture test or hardware compatibility certification.")
 		return 0
 	}
+	// Validate the whole batch before writing any output, including outputs
+	// that would replace another job's source rather than their own source.
 	jobs, err := planJobs(flags.Args(), output, outputDir)
 	if err != nil {
 		fmt.Fprintln(errOut, err)
@@ -123,10 +129,14 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 
 func processJobs(ctx context.Context, jobs []job, options audio.Options,
 	convert func(context.Context, string, string, audio.Options) (audio.Result, error), out, errOut io.Writer) int {
+	// Progress/diagnostics stay on stderr; stdout reports final per-file results
+	// and totals. One failed job does not prevent independent later jobs.
 	fmt.Fprintln(errOut, "NOTE: PCM verification covers decoded compatible channels only; DTS:X objects are not rendered and object metadata is not retained.")
 	succeeded, failed, unverified := 0, 0, 0
 	for i, job := range jobs {
 		if ctx.Err() != nil {
+			// Interrupt is distinct from an ordinary conversion error. Already
+			// published outputs survive; the active conversion cleans its staging file.
 			break
 		}
 		fmt.Fprintf(errOut, "[%d/%d] %s -> %s (encode%s)\n", i+1, len(jobs), job.input, job.output, verificationLabel(options.SkipVerify))
@@ -219,6 +229,10 @@ func planJobs(inputs []string, output, outputDir string) ([]job, error) {
 	return jobs, nil
 }
 
+// pathKey conservatively detects output collisions before files exist.
+// Resolving the parent handles symlinked directories; os.SameFile separately
+// catches aliases of existing files. Case folding may over-reject on a
+// case-sensitive macOS volume, intentionally preferring safety to overwriting.
 func pathKey(path string) (string, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {

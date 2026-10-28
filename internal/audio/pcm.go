@@ -10,6 +10,8 @@ import (
 	"github.com/ninghaofeng/hdma2truehd/internal/av"
 )
 
+// PCM fingerprints the complete decoded signal in channel-label order.
+// Separate hashes diagnose channel swaps; the exact length detects truncation.
 type PCM struct {
 	Samples uint64
 	Hashes  [][sha256.Size]byte
@@ -17,10 +19,12 @@ type PCM struct {
 
 type pcmWriter struct {
 	hashes []hash.Hash
-	word   [4]byte
-	used   int
-	words  uint64
-	bits   int
+	// Native callbacks need not end on a sample boundary. Preserve partial
+	// little-endian, left-aligned signed 32-bit words across Write calls.
+	word  [4]byte
+	used  int
+	words uint64
+	bits  int
 }
 
 func newPCMWriter(channels, bits int) *pcmWriter {
@@ -41,6 +45,8 @@ func (w *pcmWriter) Write(p []byte) (int, error) {
 			continue
 		}
 		value := binary.LittleEndian.Uint32(w.word[:])
+		// FFmpeg stores effective 16/24-bit samples in the high bits of an
+		// int32. Nonzero padding would make narrowing silently lose precision.
 		mask := uint32(0xff)
 		if w.bits == 16 {
 			mask = 0xffff
@@ -48,6 +54,8 @@ func (w *pcmWriter) Write(p []byte) (int, error) {
 		if value&mask != 0 {
 			return 0, fmt.Errorf("decoded PCM exceeds declared %d-bit precision", w.bits)
 		}
+		// The native bridge emits interleaved samples in canonical layout
+		// order; retain that channel identity without buffering the stream.
 		w.hashes[w.words%uint64(len(w.hashes))].Write(w.word[:])
 		w.words++
 		w.used = 0
@@ -56,6 +64,8 @@ func (w *pcmWriter) Write(p []byte) (int, error) {
 }
 
 func (w *pcmWriter) finish() (PCM, error) {
+	// A complete int32 is insufficient: every channel must have a sample
+	// for the last frame, and empty decodes must not verify successfully.
 	if w.used != 0 || w.words%uint64(len(w.hashes)) != 0 {
 		return PCM{}, fmt.Errorf("incomplete PCM sample or channel frame")
 	}
@@ -69,6 +79,8 @@ func (w *pcmWriter) finish() (PCM, error) {
 	return result, nil
 }
 
+// Digest hashes normalized integer PCM without retaining the audio in memory.
+// For DTS:X, this covers compatible channels only, not the spatial scene.
 func (b Backend) Digest(ctx context.Context, info Info) (PCM, error) {
 	w := newPCMWriter(info.Stream.Channels, info.Bits)
 	var err error

@@ -15,6 +15,8 @@ import (
 
 func TestTrueHDRoundTrip(t *testing.T) {
 	backend := audio.Backend{}
+	// An optional external FFmpeg is an extra decoder check, never a runtime
+	// dependency or proof from an independent decoder implementation.
 	decoder := os.Getenv("HDMA_TEST_DECODER")
 	for _, layout := range []string{"5.1(side)", "5.1", "7.1"} {
 		channels := 6
@@ -23,6 +25,8 @@ func TestTrueHDRoundTrip(t *testing.T) {
 		}
 		for _, rate := range []int{44100, 48000, 88200, 96000, 176400, 192000} {
 			for _, bits := range []int{16, 24} {
+				// Include tails around frame/restart boundaries (40/640 samples
+				// at 48 kHz), especially streams too short for a full interval.
 				for _, count := range []int{1, 39, 40, 41, 639, 640, 641, 4801} {
 					t.Run(fmt.Sprintf("%s/%dHz/%dbit/%dsamples", layout, rate, bits, count), func(t *testing.T) {
 						dir := t.TempDir()
@@ -33,6 +37,9 @@ func TestTrueHDRoundTrip(t *testing.T) {
 								state = state*1664525 + 1013904223
 								sample := int32(state) >> (32 - bits)
 								switch i % 17 {
+								// Combine deterministic noise with silence,
+								// signed extrema and channel-specific low bits.
+								// This exposes clipping, precision loss and swaps.
 								case 0:
 									sample = 0
 								case 1:
@@ -73,6 +80,8 @@ func TestTrueHDRoundTrip(t *testing.T) {
 							t.Fatal(err)
 						}
 						actual := pcm.Bytes()
+						// Compare the entire normalized signal, including its
+						// length. Successful decoding alone can hide a lost tail.
 						if !bytes.Equal(input, actual) {
 							first := 0
 							for first < len(input) && first < len(actual) && input[first] == actual[first] {

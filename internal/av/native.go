@@ -1,3 +1,5 @@
+// Package av is the synchronous cgo boundary to the patched static FFmpeg
+// backend. Each call owns its native contexts and its cancellation/PCM callbacks.
 package av
 
 /*
@@ -21,6 +23,8 @@ import (
 	"unsafe"
 )
 
+// Version rejects an accidentally linked stock/incompatible backend. The marker
+// identifies the required patches, but is not a cryptographic provenance check.
 const Version = "8.0.1-hdma2truehd-71-v1"
 
 type Info struct {
@@ -28,6 +32,8 @@ type Info struct {
 	Codec, Profile, Layout      string
 }
 
+// operation stays reachable through a cgo.Handle for the entire synchronous C
+// call. Only the integer handle crosses the boundary, never a stored Go pointer.
 type operation struct {
 	ctx context.Context
 	out io.Writer
@@ -46,11 +52,15 @@ func hdmaGoCancelled(handle C.uintptr_t) C.int {
 //export hdmaGoPCM
 func hdmaGoPCM(handle C.uintptr_t, data *C.uchar, size C.int) C.int {
 	op := cgo.Handle(handle).Value().(*operation)
+	// C owns this buffer and frees it after the callback returns. The writer
+	// must consume it synchronously, without retaining the borrowed slice.
 	p := unsafe.Slice((*byte)(unsafe.Pointer(data)), int(size))
 	n, err := op.out.Write(p)
 	if err == nil && n != len(p) {
 		err = io.ErrShortWrite
 	}
+	// Preserve the writer's Go error; C can report only a generic callback
+	// failure code, which would otherwise hide the actual cause.
 	op.err = err
 	if err != nil {
 		return -1
@@ -95,6 +105,9 @@ func Probe(ctx context.Context, path string) (Info, error) {
 	}, nil
 }
 
+// Process reopens path and checks it against previously probed metadata.
+// A nonempty output encodes TrueHD; an empty output streams normalized PCM to
+// out. This low-level entry point does not perform transactional publication.
 func Process(ctx context.Context, path, output string, expected Info, out io.Writer) error {
 	if err := Check(ctx); err != nil {
 		return err
@@ -121,6 +134,8 @@ func Process(ctx context.Context, path, output string, expected Info, out io.Wri
 	}
 	var info C.HDMAInfo
 	info.index, info.rate, info.bits, info.channels = C.int(expected.Index), C.int(expected.Rate), C.int(expected.Bits), C.int(expected.Channels)
+	// Leave space for the terminating NUL in every fixed-size C field.
+	// Silent truncation could make the native metadata checks compare aliases.
 	for _, field := range []struct {
 		value string
 		dest  []C.char
@@ -138,6 +153,8 @@ func Process(ctx context.Context, path, output string, expected Info, out io.Wri
 }
 
 func result(op *operation, ret C.int, message *C.char) error {
+	// Prefer typed Go errors so errors.Is still recognizes cancellation and
+	// writer failures after the native stack has unwound.
 	if op.ctx.Err() != nil || op.err != nil {
 		return errors.Join(op.ctx.Err(), op.err)
 	}

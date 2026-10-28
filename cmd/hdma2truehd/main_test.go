@@ -41,6 +41,7 @@ func TestPlanJobs(t *testing.T) {
 }
 
 func TestPlanJobsHardLink(t *testing.T) {
+	// String/canonical-path comparison cannot detect hard-link aliases.
 	dir := t.TempDir()
 	input := filepath.Join(dir, "source.dts")
 	output := filepath.Join(dir, "target.thd")
@@ -76,6 +77,8 @@ func TestRunArguments(t *testing.T) {
 }
 
 func TestBatchProcessing(t *testing.T) {
+	// A file failure continues the batch, whereas cancellation stops it with
+	// the interrupt status. Explicitly unverified results must never say VERIFIED.
 	for _, mode := range []string{"success", "failure", "skip", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())

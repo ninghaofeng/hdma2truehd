@@ -7,11 +7,15 @@ import (
 )
 
 // WritePCMFixture writes a small integer PCM WAV used by doctor and codec tests.
+// Input is interleaved, little-endian int32 PCM with effective bits left-aligned,
+// matching the native decoder callback representation.
 func WritePCMFixture(path string, pcm []byte, info Info) error {
 	if info.Channels < 1 || info.Channels > 8 || info.Rate <= 0 ||
 		(info.Bits != 16 && info.Bits != 24) || len(pcm)%(info.Channels*4) != 0 {
 		return fmt.Errorf("invalid PCM fixture format")
 	}
+	// WAVEFORMATEXTENSIBLE masks preserve the distinction between side and
+	// back surrounds; a plain channel count would make layout tests ambiguous.
 	var mask uint32
 	switch info.Layout {
 	case "5.1":
@@ -30,6 +34,8 @@ func WritePCMFixture(path string, pcm []byte, info Info) error {
 	size := len(pcm) / 4 * width
 	padding := size % 2
 	data := make([]byte, 68+size+padding)
+	// A 40-byte extensible fmt chunk carries the speaker mask, valid bit
+	// count and PCM subtype GUID. RIFF chunks are padded to even byte lengths.
 	copy(data, "RIFF")
 	binary.LittleEndian.PutUint32(data[4:], uint32(len(data)-8))
 	copy(data[8:], "WAVEfmt ")
@@ -47,6 +53,8 @@ func WritePCMFixture(path string, pcm []byte, info Info) error {
 	copy(data[60:], "data")
 	binary.LittleEndian.PutUint32(data[64:], uint32(size))
 	for i := 0; i < len(pcm)/4; i++ {
+		// Remove only the unused low bytes of the left-aligned int32; the WAV
+		// stores packed 16/24-bit samples without changing their effective bits.
 		copy(data[68+i*width:], pcm[i*4+4-width:i*4+4])
 	}
 	return os.WriteFile(path, data, 0600)

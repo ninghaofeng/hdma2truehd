@@ -25,17 +25,23 @@ export HDMA_CC="${CC:-cc}"
 export HDMA_EXE_SUFFIX=""
 native_destination="$destination"
 if [[ "$os" == windows ]]; then
+    # Go and its linker wrapper are native Windows programs, unlike this MSYS2
+    # shell. Give them a drive-letter path for files they create themselves.
     HDMA_EXE_SUFFIX=".exe"
     native_destination="$(cygpath -m "$destination")"
 fi
 export HDMA_RELINK_DIR="$native_destination/relink"
 wrapper="$native_destination/hdma2truehd-link-cc$HDMA_EXE_SUFFIX"
+# The pure-Go wrapper intercepts the final external link while Go's temporary
+# objects still exist. Force relinking so cached build results cannot skip it.
 CGO_ENABLED=0 go build -o "$wrapper" ./tools/link-wrapper
 PATH="$destination:$PATH" go build -a -trimpath \
     -ldflags="-linkmode=external -extld=hdma2truehd-link-cc" \
     -o "$destination/hdma2truehd$HDMA_EXE_SUFFIX" ./cmd/hdma2truehd
 rm "$wrapper"
 test -s "$HDMA_RELINK_DIR/relink.sh"
+# A static binary alone is not the complete release: package licenses,
+# corresponding FFmpeg sources/patches and the inputs needed to relink it.
 mkdir -p "$destination/licenses" "$destination/source/patches/ffmpeg" "$destination/source/scripts"
 cp patches/ffmpeg/COPYING.LGPLv2.1 "$destination/licenses/"
 cp patches/ffmpeg/README.md "$destination/licenses/FFmpeg-NOTICE.md"

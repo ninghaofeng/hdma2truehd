@@ -8,12 +8,15 @@ build="$(cd "$build" && pwd)"
 archive="$build/ffmpeg-8.0.1.tar.xz"
 source_dir="$build/ffmpeg-8.0.1"
 
+# Never patch/reconfigure an existing tree: it may contain local changes or
+# archives built for a different platform. Reuse is handled by build-common.sh.
 if [[ -e "$source_dir" ]]; then
     printf 'Refusing to modify existing source directory: %s\nUse a new build directory.\n' "$source_dir" >&2
     exit 1
 fi
 
 curl --fail --location --retry 2 https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz --output "$archive"
+# Verify the pinned upstream bytes before extracting or applying our patch.
 expected=05ee0b03119b45c0bdb4df654b96802e909e0a752f72e4fe3794f487229e5a41
 if command -v sha256sum >/dev/null 2>&1; then
     actual="$(sha256sum "$archive")"
@@ -32,6 +35,10 @@ extra_ldflags=""
 if [[ "${MSYSTEM:-}" == "UCRT64" ]]; then
     extra_ldflags="-static"
 fi
+# Build only in-process codec/container support. Disabling autodetection,
+# network, shared libraries and programs keeps system packages from silently
+# changing runtime dependencies. PCM/WAV support exists for doctor and tests.
+# The version marker is checked by the Go bridge to reject a stock backend.
 ./configure \
     --disable-everything --disable-autodetect --disable-doc --disable-network \
     --disable-debug --disable-x86asm \

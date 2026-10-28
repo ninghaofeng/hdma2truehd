@@ -1,3 +1,5 @@
+// Package audio coordinates format validation, native codec operations and
+// verified output publication. It never invokes an external media executable.
 package audio
 
 import (
@@ -9,6 +11,9 @@ import (
 
 const BackendVersion = av.Version
 
+// Backend uses the statically linked codec libraries when its hooks are nil.
+// The unexported hooks let orchestration tests inject failures without needing
+// a malformed compressed fixture for every publication/error-handling case.
 type Backend struct {
 	probe  func(context.Context, string) (Info, error)
 	encode func(context.Context, Info, string) error
@@ -24,6 +29,9 @@ func nativeInfo(info Info) av.Info {
 		Channels: info.Stream.Channels, Layout: info.Stream.Layout, Codec: info.Stream.Codec, Profile: info.Stream.Profile}
 }
 
+// Encode is the low-level codec operation; it does not validate the source
+// profile, verify PCM or publish transactionally. Convert adds those guarantees.
+// Keeping this separate also allows doctor to encode synthetic PCM fixtures.
 func (b Backend) Encode(ctx context.Context, source Info, output string) error {
 	if b.encode != nil {
 		return b.encode(ctx, source, output)

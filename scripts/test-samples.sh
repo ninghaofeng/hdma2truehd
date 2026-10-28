@@ -40,6 +40,8 @@ done
 
 shopt -s nullglob
 if [[ -z "$binary" ]]; then
+    # Limit discovery to ordinary release executables, not recursive matches
+    # or the relinked test binary. Multiple releases require an explicit choice.
     candidates=()
     for candidate in "$root/dist/$binary_name" "$root"/dist/*/"$binary_name"; do
         if [[ -f "$candidate" ]]; then
@@ -66,6 +68,8 @@ fi
 
 shopt -s nullglob nocaseglob
 inputs=()
+# Only compressed inputs at the top level are fixtures. Never feed an existing
+# .thd back into conversion or recurse into unrelated large source collections.
 for input in "$root"/samples/*.dts "$root"/samples/*.dtshd; do
     if [[ -f "$input" ]]; then
         inputs+=("$input")
@@ -82,4 +86,5 @@ if [[ "$overwrite" == true ]]; then
 fi
 printf 'Converting %d sample(s) with full PCM verification.\n' "${#inputs[@]}"
 printf 'Using executable: %s\n' "$binary"
+# Do not pass --skip-verify; preserve the converter's status for automation.
 exec "$binary" "${options[@]}" "${inputs[@]}"

@@ -11,6 +11,8 @@ import (
 	"github.com/ninghaofeng/hdma2truehd/internal/av"
 )
 
+// SelfTest exercises the installed encoder/decoder without external fixtures
+// or subprocesses. It is not a DTS decode test or a playback certification.
 func (b Backend) SelfTest(ctx context.Context) (err error) {
 	if err := b.Check(ctx); err != nil {
 		return err
@@ -29,6 +31,9 @@ func (b Backend) SelfTest(ctx context.Context) (err error) {
 		if layout == "7.1" {
 			channels = 8
 		}
+		// 641 samples straddle the default 640-sample restart interval at
+		// 48 kHz, exercising both a complete interval and the final short tail.
+		// Deterministic full-range data also makes channel/order errors visible.
 		pcm := make([]byte, 641*channels*4)
 		var state uint32 = 1234567
 		for i := 0; i < len(pcm); i += 4 {

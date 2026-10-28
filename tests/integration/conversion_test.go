@@ -22,6 +22,8 @@ func TestDoctor(t *testing.T) {
 }
 
 func TestRejectPCMInput(t *testing.T) {
+	// Low-level encoding accepts synthetic PCM for doctor, but the public
+	// conversion pipeline must still enforce the lossless DTS source policy.
 	b := testBackend(t)
 	dir := t.TempDir()
 	wav := filepath.Join(dir, "not-ma.wav")
@@ -39,6 +41,8 @@ func TestRejectPCMInput(t *testing.T) {
 }
 
 func TestDTSHDMAConversion(t *testing.T) {
+	// Real compressed fixtures are opt-in and checked separately by layout
+	// and X profile. Never substitute synthetic PCM for missing DTS coverage.
 	b := testBackend(t)
 	for _, fixture := range []struct {
 		env      string

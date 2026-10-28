@@ -1,3 +1,6 @@
+// Command link-wrapper temporarily stands in for Go's external C linker.
+// It saves the final link inputs and a replay command for LGPL relinking, then
+// delegates the original invocation to the real compiler without rewriting it.
 package main
 
 import (
@@ -18,6 +21,8 @@ func main() {
 func link() error {
 	args := os.Args[1:]
 	capture := false
+	// Go also invokes the external compiler for capability probes. Only the
+	// final application link includes go.o and should produce relink materials.
 	for _, arg := range args {
 		if filepath.Base(arg) == "go.o" {
 			capture = true
@@ -46,16 +51,23 @@ func link() error {
 			}
 			prefix := ""
 			input := arg
+			// A linker script may be embedded in a compiler forwarding option
+			// rather than passed as a bare filename. Preserve that option syntax.
 			if strings.HasPrefix(arg, "-Wl,-T,") {
 				prefix = "-Wl,-T,"
 				input = strings.TrimPrefix(arg, prefix)
 			}
+			// Go removes its temporary link directory after building. Capture
+			// all referenced objects, archives and scripts now, including the
+			// Windows export_file.def, or later relinking would depend on it.
 			if strings.HasSuffix(input, ".o") || strings.HasSuffix(input, ".a") || strings.HasSuffix(input, ".ld") || strings.HasSuffix(input, ".def") {
 				name := filepath.Base(input)
 				data, err := os.ReadFile(input)
 				if err != nil {
 					return err
 				}
+				// Flatten to portable relative names, but fail on collisions:
+				// replacing a same-named input could silently link wrong code.
 				target, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 				if err != nil {
 					return err
@@ -75,6 +87,8 @@ func link() error {
 		var script strings.Builder
 		script.WriteString("#!/usr/bin/env bash\nset -euo pipefail\ncd \"$(dirname \"$0\")\"\n\"${CC:-cc}\" ")
 		for _, arg := range replay {
+			// Replay uses Bash on both platforms. Normalize Windows separators
+			// and quote every argument, including embedded single quotes.
 			script.WriteString("'" + strings.ReplaceAll(filepath.ToSlash(arg), "'", "'\\''") + "' ")
 		}
 		script.WriteString("\n")

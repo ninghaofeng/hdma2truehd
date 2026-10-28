@@ -6,10 +6,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Preserve the CLI's exit code explicitly rather than converting a nonzero
+# native status into a PowerShell exception under newer PowerShell versions.
 $PSNativeCommandUseErrorActionPreference = $false
 
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $PSBoundParameters.ContainsKey('Binary')) {
+    # Match the Bash script: only ordinary binaries in dist or one level below
+    # it are candidates. Never silently pick a release by modification time.
     $dist = Join-Path $root 'dist'
     if (-not (Test-Path -LiteralPath $dist -PathType Container)) {
         throw "Release directory not found: $dist. Build a release first or specify -Binary PATH."
@@ -39,6 +43,7 @@ if (-not (Test-Path -LiteralPath $samples -PathType Container)) {
     throw "Samples directory not found: $samples."
 }
 $inputs = @(
+    # Array syntax preserves Count for zero/one input; sorting stabilizes logs.
     Get-ChildItem -LiteralPath $samples -File |
         Where-Object { $_.Extension -in @('.dts', '.dtshd') } |
         Sort-Object Name |
@@ -49,6 +54,8 @@ if ($inputs.Count -eq 0) {
 }
 
 $convertArgs = @('convert', '--output-dir', $samples)
+# Verification is intentionally not configurable here; every sample must pass
+# the CLI's default full PCM comparison before its output is published.
 if ($Overwrite) {
     $convertArgs += '--overwrite'
 }

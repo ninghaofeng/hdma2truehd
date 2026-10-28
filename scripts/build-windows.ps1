@@ -22,6 +22,8 @@ if (-not (Get-Command go.exe -ErrorAction SilentlyContinue)) {
 }
 
 $common = (Join-Path $PSScriptRoot 'build-common.sh').Replace('\', '/')
+# Translate switches into arguments for the shared orchestration; do not
+# duplicate dependency installation, cleanup or release logic in PowerShell.
 $buildArgs = @('windows')
 if ($BinaryOnly) {
     $buildArgs += '--binary-only'
@@ -40,6 +42,8 @@ if ($OutputDir) {
 }
 
 $names = @('MSYSTEM', 'MSYS2_PATH_TYPE', 'CHERE_INVOKING')
+# Scope the MSYS2 environment to this invocation. Inheriting PATH makes the
+# user's native Go visible, while UCRT64 selects the matching C toolchain.
 $previous = @{}
 foreach ($name in $names) {
     $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -53,6 +57,8 @@ try {
     $buildExitCode = $LASTEXITCODE
 }
 finally {
+    # Restore even after an invocation failure so the caller's shell is not
+    # left configured for MSYS2 by a failed build.
     foreach ($name in $names) {
         [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process')
     }

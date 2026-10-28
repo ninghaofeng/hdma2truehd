@@ -13,6 +13,7 @@ import (
 
 func fixture(t *testing.T) (string, Info) {
 	t.Helper()
+	// Exercise UTF-8/space paths across cgo without relying on shell quoting.
 	path := filepath.Join(t.TempDir(), "空 格.wav")
 	info := Info{Rate: 48000, Bits: 24, Channels: 8, Layout: "7.1"}
 	pcm := make([]byte, 48001*8*4)
@@ -41,6 +42,8 @@ func TestNativeCancellation(t *testing.T) {
 	}
 	ctx, cancel = context.WithCancel(t.Context())
 	defer cancel()
+	// Cancel inside a PCM callback so this covers an already-running C call,
+	// not only the cheap pre-call context check.
 	w := writerFunc(func(p []byte) (int, error) {
 		cancel()
 		return len(p), nil
@@ -56,6 +59,7 @@ func (w writerFunc) Write(p []byte) (int, error) { return w(p) }
 
 func TestNativeErrors(t *testing.T) {
 	path, info := fixture(t)
+	// Native AVERROR_EXTERNAL must not erase the original Go writer error.
 	deliberate := errors.New("deliberate writer error")
 	if err := Process(t.Context(), path, "", info, writerFunc(func([]byte) (int, error) {
 		return 0, deliberate
@@ -99,6 +103,8 @@ func TestNativeErrors(t *testing.T) {
 }
 
 func TestNativeConcurrent(t *testing.T) {
+	// Separate native contexts and callback handles must not share decoder
+	// state; the race-enabled suite also checks the Go side of this boundary.
 	for i := 0; i < 4; i++ {
 		t.Run(string(rune('a'+i)), func(t *testing.T) {
 			t.Parallel()

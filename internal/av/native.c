@@ -15,6 +15,9 @@
 extern int hdmaGoCancelled(uintptr_t handle);
 extern int hdmaGoPCM(uintptr_t handle, unsigned char *data, int size);
 
+/* One call owns all of these resources; zero initialization makes a single
+ * cleanup path safe even when setup fails partway through. No codec contexts
+ * are shared between calls. stage provides context for native error codes. */
 typedef struct Operation {
     uintptr_t handle;
     AVFormatContext *input;
@@ -58,6 +61,8 @@ static int fail(char *message, const char *stage, int ret)
 
 static void close_operation(Operation *op)
 {
+    /* avformat_close_input owns input I/O, whereas output I/O must be closed
+     * explicitly before freeing its format context. */
     swr_free(&op->swr);
     av_audio_fifo_free(op->fifo);
     avcodec_free_context(&op->encoder);
@@ -81,6 +86,8 @@ static int open_input(Operation *op, const char *path)
     if (!op->input)
         return AVERROR(ENOMEM);
     op->input->interrupt_callback = (AVIOInterruptCB){cancelled, op};
+    /* Keep all media I/O local, and never turn a corrupt packet into a
+     * success-shaped decode with concealment standing in for lost PCM. */
     AVDictionary *options = NULL;
     av_dict_set(&options, "protocol_whitelist", "file", 0);
     av_dict_set(&options, "err_detect", "explode", 0);
@@ -91,6 +98,8 @@ static int open_input(Operation *op, const char *path)
     op->stage = "read stream information";
     if ((ret = avformat_find_stream_info(op->input, NULL)) < 0)
         return ret;
+    /* The public contract is one audio stream, not implicit stream selection
+     * from a movie container. Reject ambiguity rather than choosing a track. */
     if (op->input->nb_streams != 1 ||
         op->input->streams[0]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO)
         return AVERROR_INVALIDDATA;
@@ -133,6 +142,8 @@ static int open_decoder(Operation *op, const HDMAInfo *expected)
         return AVERROR_DECODER_NOT_FOUND;
     if ((ret = av_channel_layout_from_string(&op->layout, expected->layout)) < 0)
         return ret;
+    /* Probe and processing reopen the file separately. Refuse changes to the
+     * expected stream identity/format rather than encoding under stale labels. */
     if (expected->index != op->input->streams[0]->index ||
         expected->rate != par->sample_rate || expected->channels != par->ch_layout.nb_channels ||
         av_channel_layout_compare(&op->layout, &par->ch_layout))
@@ -150,6 +161,8 @@ static int open_decoder(Operation *op, const HDMAInfo *expected)
     if ((ret = avcodec_parameters_to_context(op->decoder, par)) < 0)
         return ret;
     op->decoder->err_recognition = AV_EF_EXPLODE | AV_EF_CRCCHECK | AV_EF_BITSTREAM | AV_EF_BUFFER;
+    /* core_only would silently discard the lossless extension. DTS:X still
+     * yields compatible channel PCM here; this is not a spatial renderer. */
     if (par->codec_id == AV_CODEC_ID_DTS &&
         (ret = av_opt_set_int(op->decoder->priv_data, "core_only", 0, 0)) < 0)
         return ret;
@@ -168,12 +181,17 @@ static int open_encoder(Operation *op, const char *output)
     if (!op->encoder)
         return AVERROR(ENOMEM);
     op->encoder->sample_rate = op->rate;
+    /* The encoder consumes planar integers. Twenty-four effective bits occupy
+     * the high bits of int32 samples; no float quantization is introduced. */
     op->encoder->sample_fmt = op->bits == 16 ? AV_SAMPLE_FMT_S16P : AV_SAMPLE_FMT_S32P;
     op->encoder->time_base = (AVRational){1, op->rate};
     op->encoder->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
     if ((ret = av_channel_layout_copy(&op->encoder->ch_layout, &op->layout)) < 0 ||
         (ret = avcodec_open2(op->encoder, codec, NULL)) < 0)
         return ret;
+    /* DTS decoder frames and TrueHD access units have different lengths.
+     * FIFO reblocking preserves every sample without imposing decoder framing
+     * on the encoder. The final short block is handled during flush. */
     op->fifo = av_audio_fifo_alloc(op->encoder->sample_fmt, op->layout.nb_channels, op->encoder->frame_size);
     if (!op->fifo)
         return AVERROR(ENOMEM);
@@ -209,6 +227,8 @@ static int write_packets(Operation *op)
         }
     }
     av_packet_free(&packet);
+    /* EAGAIN means the encoder needs more PCM; EOF is normal after flush.
+     * Other errors, including output I/O and cancellation, propagate. */
     return ret == AVERROR(EAGAIN) || ret == AVERROR_EOF ? 0 : ret;
 }
 
@@ -219,6 +239,8 @@ static int encode_fifo(Operation *op, int final)
         AVFrame *frame = av_frame_alloc();
         if (!frame)
             return AVERROR(ENOMEM);
+        /* Never zero-pad the last unit to frame_size: verification requires
+         * the encoded stream to retain the exact source sample count. */
         frame->nb_samples = FFMIN(available, op->encoder->frame_size);
         frame->sample_rate = op->rate;
         frame->format = op->encoder->sample_fmt;
@@ -246,6 +268,8 @@ static int consume_frame(Operation *op, AVFrame *frame)
     op->stage = "validate decoded frame / convert sample representation";
     if (cancelled(op))
         return AVERROR_EXIT;
+    /* Headers alone are insufficient: reject damaged frames or midstream
+     * format changes before any PCM reaches hashing or encoding. */
     if (frame->flags & AV_FRAME_FLAG_CORRUPT || frame->decode_error_flags ||
         frame->sample_rate != op->rate || av_channel_layout_compare(&frame->ch_layout, &op->layout))
         return AVERROR_INVALIDDATA;
@@ -257,6 +281,9 @@ static int consume_frame(Operation *op, AVFrame *frame)
         return AVERROR_INVALIDDATA;
     }
     if (!op->swr) {
+        /* swresample only normalizes sample representation. Equal input/output
+         * rates and layouts plus disabled dither prohibit intentional remixing,
+         * resampling or added noise. The checks below enforce this invariant. */
         op->input_format = frame->format;
         ret = swr_alloc_set_opts2(&op->swr, &op->layout, AV_SAMPLE_FMT_S32, op->rate,
                                  &op->layout, frame->format, op->rate, 0, NULL);
@@ -273,10 +300,14 @@ static int consume_frame(Operation *op, AVFrame *frame)
         return AVERROR(ENOMEM);
     count = swr_convert(op->swr, &pcm, frame->nb_samples,
                         (const uint8_t **)frame->extended_data, frame->nb_samples);
+    /* Representation conversion must be one-to-one and introduce no delay.
+     * Buffered samples would otherwise require a separate flush path. */
     if (count != frame->nb_samples || swr_get_delay(op->swr, op->rate) != 0) {
         ret = count < 0 ? count : AVERROR_INVALIDDATA;
         goto end;
     }
+    /* Check unused low bits before narrowing or hashing. A 32-bit container
+     * must not hide precision beyond the declared 16/24 effective bits. */
     for (int i = 0; i < count * channels; i++) {
         uint32_t mask = op->bits == 16 ? 0xffff : 0xff;
         if (((uint32_t *)pcm)[i] & mask) {
@@ -286,6 +317,8 @@ static int consume_frame(Operation *op, AVFrame *frame)
         }
     }
     if (!op->encoder) {
+        /* The callback contract is explicitly little-endian int32, independent
+         * of host byte order. Go consumes this borrowed buffer synchronously. */
         for (int i = 0; i < count * channels; i++) {
             uint32_t sample = ((uint32_t *)pcm)[i];
             AV_WL32(pcm + 4*i, sample);
@@ -293,6 +326,8 @@ static int consume_frame(Operation *op, AVFrame *frame)
         ret = hdmaGoPCM(op->handle, pcm, count * channels * 4) < 0 ? AVERROR_EXTERNAL : 0;
         goto end;
     }
+    /* Encoding retains native integer values and speaker order; only
+     * interleaved-to-planar storage is changed before FIFO reblocking. */
     planar = av_frame_alloc();
     if (!planar) {
         ret = AVERROR(ENOMEM);
@@ -350,6 +385,8 @@ int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
     int ret = open_input(&op, path);
     if (ret < 0 || (ret = open_decoder(&op, expected)) < 0)
         goto end;
+    /* NULL output selects decode/hash callbacks. Otherwise Go supplies a
+     * private staging path and owns validation/publication after this returns. */
     if (output && (ret = open_encoder(&op, output)) < 0)
         goto end;
     packet = av_packet_alloc();
@@ -368,6 +405,8 @@ int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
             goto end;
         }
         if (packet->stream_index == expected->index) {
+            /* Drain all decoded frames from each packet before submitting the
+             * next one, so decoder backpressure is handled synchronously. */
             ret = avcodec_send_packet(op.decoder, packet);
             if (ret < 0 || (ret = receive_frames(&op)) < 0)
                 goto end;
@@ -375,6 +414,8 @@ int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
         av_packet_unref(packet);
         op.stage = "read next input packet";
     }
+    /* Only a clean demux EOF permits flushing. Do not ignore a read error
+     * merely because its successfully decoded prefix is nonempty. */
     if (ret != AVERROR_EOF)
         goto end;
     op.stage = "flush decoder";
@@ -386,6 +427,9 @@ int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
         goto end;
     }
     if (op.encoder) {
+        /* Flush in dependency order: decoded tail, FIFO remainder, delayed
+         * encoder packets, then muxer trailer. The patched encoder handles
+         * streams shorter than its initial restart interval. */
         op.stage = "flush TrueHD encoder";
         if ((ret = encode_fifo(&op, 1)) < 0 ||
             (ret = avcodec_send_frame(op.encoder, NULL)) < 0 ||

@@ -69,6 +69,8 @@ func TestCapturingWindowsExportDefinition(t *testing.T) {
 	if err := link(); err == nil {
 		t.Fatal("expected missing compiler")
 	}
+	// Model Go deleting go-link's temporary directory after the build.
+	// The replay must remain usable without its original export definition.
 	if err := os.RemoveAll(inputs); err != nil {
 		t.Fatal(err)
 	}

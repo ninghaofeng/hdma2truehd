@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Both platform entry points use this orchestration; relative output paths are
+# resolved from the repository, not from the caller's working directory.
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$root"
 platform="${1:?Pass macos or windows}"
@@ -60,6 +62,8 @@ fi
 case "$platform" in
     macos)
         if [[ "$install_deps" == true ]]; then
+            # Installation is opt-in. Do not upgrade the whole MSYS2 system or install
+            # Go here; keep pacman's confirmation and recheck actual tools afterwards.
             printf '%s\n' '--install-deps is only supported for Windows MSYS2 UCRT64 builds.' >&2
             exit 2
         fi
@@ -114,6 +118,8 @@ for tool in "${tools[@]}"; do
     fi
 done
 export CGO_ENABLED=1
+# Go and the C toolchain must target the same native platform/architecture.
+# A pure-Go cross build cannot substitute for matching FFmpeg static archives.
 if [[ "$(go env GOOS)" != "$target" || "$(go env GOARCH)" != "$(go env GOHOSTARCH)" ]]; then
     printf 'A native build is required; unset cross-compilation GOOS/GOARCH overrides.\n' >&2
     exit 1
@@ -128,6 +134,8 @@ if [[ "$platform" == windows ]]; then
 fi
 
 check_static_dependencies() {
+    # "Single executable" still permits OS libraries/frameworks, but never a
+    # runtime dependency on separately installed FFmpeg or GCC support DLLs.
     local imports
     if [[ "$platform" == macos ]]; then
         imports="$(otool -L "$1")"
@@ -154,6 +162,9 @@ if [[ -z "$destination" ]]; then
     fi
 fi
 if [[ "$clean" == true ]]; then
+    # Constrain deletion to one real, direct child of the physical dist path.
+    # Resolve the parent separately so "."/".." and symlink aliases cannot
+    # broaden the cleanup target to dist itself or another project directory.
     if [[ -L "$root/dist" ]]; then
         printf 'Refusing to clean through a symlinked dist directory.\n' >&2
         exit 1
@@ -178,6 +189,8 @@ elif [[ "$binary_only" == false && ( -e "$destination" || -L "$destination" ) ]]
 fi
 
 if [[ "$reuse" == true || "$binary_only" == true ]]; then
+    # A local quick build needs only archives. A redistributable release also
+    # needs the original source archive for the bundled licensing materials.
     for lib in avformat avcodec swresample avutil; do
         if [[ ! -s "$root/.backend/ffmpeg-8.0.1/lib$lib/lib$lib.a" ]]; then
             printf 'Cannot reuse backend: missing lib%s.a. Run the full platform build without --reuse-backend or --binary-only first.\n' "$lib" >&2
@@ -195,6 +208,8 @@ fi
 
 if [[ "$binary_only" == true ]]; then
     mkdir -p "$destination"
+    # External .a replacements are not ordinary Go source dependencies.
+    # Force rebuilding/relinking rather than trusting a previously cached link.
     go build -a -trimpath -ldflags="-linkmode=external" \
         -o "$destination/hdma2truehd$suffix" ./cmd/hdma2truehd
     check_static_dependencies "$destination/hdma2truehd$suffix"
@@ -203,6 +218,8 @@ if [[ "$binary_only" == true ]]; then
 fi
 
 if [[ "$clean" == true && -d "$destination" ]]; then
+    # Tool/backend checks completed before removing the old release. A failure
+    # after this point cannot restore it; --clean is deliberately explicit.
     printf 'Cleaning release directory: %s\n' "$destination"
     rm -r -- "$destination"
 fi
@@ -213,6 +230,8 @@ else
     go test -a ./...
 fi
 go vet ./...
+# A release is checked twice: the originally linked program and the binary
+# rebuilt solely from the captured objects/libraries must both pass doctor.
 bash scripts/build-release.sh "$destination"
 bash "$destination/relink/relink.sh"
 "$destination/hdma2truehd$suffix" doctor
