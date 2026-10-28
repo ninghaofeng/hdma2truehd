@@ -272,7 +272,8 @@ dist/hdma2truehd-darwin-arm64/hdma2truehd-relinked doctor
 发布目录包含：
 
 - 单文件程序。
-- Go/cgo 可重新链接对象、FFmpeg 静态库，以及捕获的原始外部链接命令。
+- Go/cgo 可重新链接对象、FFmpeg 静态库、链接脚本、Windows 导出定义文件（如有），
+  以及捕获的原始外部链接命令；重新链接不依赖 Go 临时构建目录。
 - FFmpeg 原始源码归档、补丁、配置后的完整源码、构建脚本和工具链信息。
 - LGPL、Go 许可证及 [重新链接说明](docs/RELINKING.md)。
 

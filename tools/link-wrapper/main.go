@@ -50,7 +50,7 @@ func link() error {
 				prefix = "-Wl,-T,"
 				input = strings.TrimPrefix(arg, prefix)
 			}
-			if strings.HasSuffix(input, ".o") || strings.HasSuffix(input, ".a") || strings.HasSuffix(input, ".ld") {
+			if strings.HasSuffix(input, ".o") || strings.HasSuffix(input, ".a") || strings.HasSuffix(input, ".ld") || strings.HasSuffix(input, ".def") {
 				name := filepath.Base(input)
 				data, err := os.ReadFile(input)
 				if err != nil {
