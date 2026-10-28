@@ -3,7 +3,8 @@ param(
     [string]$Msys2Root = $(if ($env:MSYS2_ROOT) { $env:MSYS2_ROOT } else { 'C:\msys64' }),
     [string]$OutputDir,
     [switch]$ReuseBackend,
-    [switch]$BinaryOnly
+    [switch]$BinaryOnly,
+    [switch]$InstallDependencies
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,6 +24,9 @@ $common = (Join-Path $PSScriptRoot 'build-common.sh').Replace('\', '/')
 $buildArgs = @('windows')
 if ($BinaryOnly) {
     $buildArgs += '--binary-only'
+}
+if ($InstallDependencies) {
+    $buildArgs += '--install-deps'
 }
 if ($ReuseBackend) {
     $buildArgs += '--reuse-backend'

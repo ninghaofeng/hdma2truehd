@@ -7,6 +7,7 @@ platform="${1:?Pass macos or windows}"
 shift
 reuse=false
 binary_only=false
+install_deps=false
 destination=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -16,6 +17,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --binary-only)
             binary_only=true
+            shift
+            ;;
+        --install-deps)
+            install_deps=true
             shift
             ;;
         --output-dir)
@@ -28,9 +33,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --help|-h)
             printf 'Usage: build-macos.sh [--binary-only] [--reuse-backend] [--output-dir DIR]\n'
-            printf 'Windows: build-windows.ps1 [-Msys2Root PATH] [-BinaryOnly] [-ReuseBackend] [-OutputDir DIR]\n'
+            printf 'Windows: build-windows.ps1 [-Msys2Root PATH] [-BinaryOnly] [-ReuseBackend] [-InstallDependencies] [-OutputDir DIR]\n'
             printf 'Default: build libraries, test and package a complete release in dist/.\n'
             printf 'Binary-only: reuse existing static libraries and rebuild bin/hdma2truehd (no tests or release materials).\n'
+            printf 'Windows --install-deps: install MSYS2 prerequisites with pacman --needed, then build (confirmation required).\n'
             exit 0
             ;;
         *)
@@ -42,6 +48,10 @@ done
 
 case "$platform" in
     macos)
+        if [[ "$install_deps" == true ]]; then
+            printf '%s\n' '--install-deps is only supported for Windows MSYS2 UCRT64 builds.' >&2
+            exit 2
+        fi
         if [[ "$(uname -s)" != Darwin ]]; then
             printf 'The macOS build requires a macOS host.\n' >&2
             exit 1
@@ -62,6 +72,18 @@ case "$platform" in
         exit 2
         ;;
 esac
+if [[ "$install_deps" == true ]]; then
+    if ! command -v pacman >/dev/null 2>&1; then
+        printf 'MSYS2 pacman not found. Check -Msys2Root points to a complete MSYS2 installation.\n' >&2
+        exit 1
+    fi
+    packages=(mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-binutils)
+    if [[ "$binary_only" == false ]]; then
+        packages=(make diffutils patch curl tar xz "${packages[@]}")
+    fi
+    printf 'Installing MSYS2 build prerequisites; pacman will request confirmation if needed.\n'
+    pacman -S --needed "${packages[@]}"
+fi
 tools=(go "$CC")
 if [[ "$binary_only" == false ]]; then
     tools+=(bash make curl tar xz patch)
@@ -74,6 +96,9 @@ fi
 for tool in "${tools[@]}"; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         printf 'Missing build tool: %s. See README.md for platform prerequisites.\n' "$tool" >&2
+        if [[ "$platform" == windows ]]; then
+            printf 'Re-run build-windows.ps1 with -InstallDependencies, keeping your other build options.\nGo must be installed separately and available on PATH.\n' >&2
+        fi
         exit 1
     fi
 done

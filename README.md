@@ -76,10 +76,22 @@ bash scripts/build-macos.sh --binary-only --output-dir bin/dev
 
 ### Windows
 
-安装 Go 和 [MSYS2](https://www.msys2.org/)。首次在 **UCRT64** 终端准备依赖：
+安装 Go 和 [MSYS2](https://www.msys2.org/)。首次可由构建入口安装并校验 MSYS2 依赖：
+
+```powershell
+.\scripts\build-windows.ps1 -InstallDependencies
+```
+
+`-InstallDependencies` 在所选 MSYS2 的 UCRT64 环境中执行
+`pacman -S --needed`，安装缺失的构建包；由 pacman 提示确认，失败则立即停止，
+成功后重新检查工具并继续构建。它不安装 Go/MSYS2、不执行系统升级，
+也不会自动修改执行策略。后续构建无需再次指定该参数。
+搭配 `-BinaryOnly` 时仅安装 GCC 和 binutils，不安装完整发布所需的其他工具。
+
+也可以在 **UCRT64** 终端手动安装同样的完整依赖：
 
 ```sh
-pacman -S --needed make diffutils patch curl tar xz mingw-w64-ucrt-x86_64-gcc
+pacman -S --needed make diffutils patch curl tar xz mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-binutils
 ```
 
 然后在项目目录下的 **PowerShell** 中运行：
@@ -89,6 +101,9 @@ pacman -S --needed make diffutils patch curl tar xz mingw-w64-ucrt-x86_64-gcc
 
 # MSYS2 安装在非默认位置
 .\scripts\build-windows.ps1 -Msys2Root 'D:\msys64'
+
+# 自定义 MSYS2 路径，并安装所需依赖后构建
+.\scripts\build-windows.ps1 -Msys2Root 'D:\msys64' -InstallDependencies
 
 # 复用已经编译的 Windows 静态库
 .\scripts\build-windows.ps1 -ReuseBackend -OutputDir 'dist\windows-new'
@@ -101,8 +116,9 @@ pacman -S --needed make diffutils patch curl tar xz mingw-w64-ucrt-x86_64-gcc
 ```
 
 默认 MSYS2 路径为 `C:\msys64`，也可以通过 `MSYS2_ROOT` 环境变量指定。
-PowerShell 入口会自动启动 MSYS2 UCRT64 登录 shell，并继承系统 PATH，
-不会自动安装软件、改变执行策略或永久修改环境变量。
+PowerShell 入口会自动启动 MSYS2 UCRT64 登录 shell，并继承系统 PATH。
+默认只检查依赖，仅显式指定 `-InstallDependencies` 时安装 MSYS2 构建包；
+不会改变执行策略或永久修改环境变量。
 Go 必须在 Windows PATH 中；当前 Windows 构建入口要求 amd64 Go 和 UCRT64 GCC。
 FFmpeg 与 Go/cgo 必须使用匹配的目标架构和工具链；
 不能用 `CGO_ENABLED=0` 或只设置 `GOOS=windows` 的纯 Go 交叉编译代替原生构建。
