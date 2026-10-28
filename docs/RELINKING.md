@@ -1,6 +1,6 @@
 # Re-linking the statically linked FFmpeg libraries
 
-The executable statically links modified FFmpeg libraries, licensed under
+Each executable statically links modified FFmpeg libraries, licensed under
 LGPL 2.1 or later. See `licenses/COPYING.LGPLv2.1` and
 `licenses/FFmpeg-NOTICE.md`. It still uses operating-system libraries; "single
 file" means no separately installed FFmpeg executable or FFmpeg shared library.
@@ -28,8 +28,18 @@ necessary. Platform SDK paths in the captured command may need adjustment
 for your machine. Code signing, if required by your platform, must be performed
 again after re-linking.
 
-Desktop releases use the same procedure, producing `hdma2truehd-ui-relinked`
-(`.exe` on Windows), which opens the GUI rather than supporting `doctor`.
+Default releases contain both CLI and UI, with separate captured application
+objects. The CLI uses `relink/`; build the UI with:
+
+```sh
+bash relink-ui/relink.sh
+```
+
+This produces `hdma2truehd-ui-relinked` (`.exe` on Windows), which opens the GUI
+rather than supporting `doctor`. Single-target releases (`--target cli` or
+`--target ui`, including the compatibility `build-ui.sh` entry point) always
+use `relink/relink.sh`. FFmpeg sources and license notices are shared in a
+combined release; each relinking directory has its own replaceable archives.
 On macOS, to test the app bundle, replace
 `HDMA Converter.app/Contents/MacOS/hdma2truehd-ui` with that relinked executable.
 The desktop UI additionally uses system WebKit or the Windows WebView2 runtime.

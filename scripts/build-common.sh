@@ -12,6 +12,7 @@ binary_only=false
 install_deps=false
 clean=false
 destination=""
+build_target=both
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --reuse-backend)
@@ -38,11 +39,19 @@ while [[ $# -gt 0 ]]; do
             destination="$2"
             shift 2
             ;;
+        --target)
+            if [[ $# -lt 2 ]]; then
+                printf '%s\n' '--target requires both, cli or ui.' >&2
+                exit 2
+            fi
+            build_target="$2"
+            shift 2
+            ;;
         --help|-h)
-            printf 'Usage: build-macos.sh [--binary-only] [--reuse-backend] [--clean] [--output-dir DIR]\n'
-            printf 'Windows: build-windows.ps1 [-Msys2Root PATH] [-BinaryOnly] [-ReuseBackend] [-InstallDependencies] [-Clean] [-OutputDir DIR]\n'
-            printf 'Default: build libraries, test and package a complete release in dist/.\n'
-            printf 'Binary-only: reuse existing static libraries and rebuild bin/hdma2truehd (no tests or release materials).\n'
+            printf 'Usage: build-macos.sh [--target both|cli|ui] [--binary-only] [--reuse-backend] [--clean] [--output-dir DIR]\n'
+            printf 'Windows: build-windows.ps1 [-Target both|cli|ui] [-Msys2Root PATH] [-BinaryOnly] [-ReuseBackend] [-InstallDependencies] [-Clean] [-OutputDir DIR]\n'
+            printf 'Default: build libraries, test and package CLI and UI together in dist/.\n'
+            printf 'Binary-only: reuse existing static libraries and rebuild both applications in bin/ (no tests or release materials).\n'
             printf 'Windows --install-deps: install MSYS2 prerequisites with pacman --needed, then build (confirmation required).\n'
             printf 'Clean: remove only the selected release directory directly inside project dist/ before building; static libraries are preserved.\n'
             exit 0
@@ -54,6 +63,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+case "$build_target" in
+    both) apps=(hdma2truehd hdma2truehd-ui) ;;
+    cli) apps=(hdma2truehd) ;;
+    ui) apps=(hdma2truehd-ui) ;;
+    *) printf 'Invalid build target: %s (choose both, cli or ui).\n' "$build_target" >&2; exit 2 ;;
+esac
 if [[ "$clean" == true && "$binary_only" == true ]]; then
     printf '%s\n' '--clean is for full releases; --binary-only already replaces the executable without removing its output directory.' >&2
     exit 2
@@ -107,6 +122,7 @@ if [[ "$platform" == macos ]]; then
     tools+=(otool)
 else
     tools+=(objdump)
+    if [[ "$build_target" != cli ]]; then tools+=(windres); fi
 fi
 for tool in "${tools[@]}"; do
     if ! command -v "$tool" >/dev/null 2>&1; then
@@ -158,7 +174,9 @@ if [[ -z "$destination" ]]; then
     if [[ "$binary_only" == true ]]; then
         destination="$root/bin"
     else
-        destination="$root/dist/hdma2truehd-$target-$(go env GOARCH)"
+        release_name=hdma2truehd
+        if [[ "$build_target" == ui ]]; then release_name=hdma2truehd-ui; fi
+        destination="$root/dist/$release_name-$target-$(go env GOARCH)"
     fi
 fi
 if [[ "$clean" == true ]]; then
@@ -207,13 +225,11 @@ else
 fi
 
 if [[ "$binary_only" == true ]]; then
-    mkdir -p "$destination"
-    # External .a replacements are not ordinary Go source dependencies.
-    # Force rebuilding/relinking rather than trusting a previously cached link.
-    go build -a -trimpath -ldflags="-linkmode=external" \
-        -o "$destination/hdma2truehd$suffix" ./cmd/hdma2truehd
-    check_static_dependencies "$destination/hdma2truehd$suffix"
-    printf '\nStatic-library binary built: %s/hdma2truehd%s\nTests and release packaging were not run; use the full build before distribution.\n' "$destination" "$suffix"
+    bash scripts/build-release.sh --binary-only --target "$build_target" "$destination"
+    for app in "${apps[@]}"; do
+        check_static_dependencies "$destination/$app$suffix"
+    done
+    printf '\nStatic-library applications built (%s): %s\nTests and release packaging were not run; use the full build before distribution.\n' "$build_target" "$destination"
     exit 0
 fi
 
@@ -230,12 +246,19 @@ else
     go test -a ./...
 fi
 go vet ./...
-# A release is checked twice: the originally linked program and the binary
-# rebuilt solely from the captured objects/libraries must both pass doctor.
-bash scripts/build-release.sh "$destination"
-bash "$destination/relink/relink.sh"
-"$destination/hdma2truehd$suffix" doctor
-"$destination/hdma2truehd-relinked$suffix" doctor
-check_static_dependencies "$destination/hdma2truehd$suffix"
-check_static_dependencies "$destination/hdma2truehd-relinked$suffix"
+if [[ "$build_target" != cli ]]; then
+    go vet -tags desktop,production ./cmd/hdma2truehd-ui
+fi
+bash scripts/build-release.sh --target "$build_target" "$destination"
+for app in "${apps[@]}"; do
+    relink=relink
+    if [[ "$build_target" == both && "$app" == hdma2truehd-ui ]]; then relink=relink-ui; fi
+    bash "$destination/$relink/relink.sh"
+    if [[ "$app" == hdma2truehd ]]; then
+        "$destination/$app$suffix" doctor
+        "$destination/$app-relinked$suffix" doctor
+    fi
+    check_static_dependencies "$destination/$app$suffix"
+    check_static_dependencies "$destination/$app-relinked$suffix"
+done
 printf '\nBuild and re-link verification completed: %s\n' "$destination"

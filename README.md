@@ -42,21 +42,26 @@ PCM 一致性校验只覆盖解码后的兼容声道，不表示完整保留 DTS
   已发布的输出保留。技术诊断保留后端原始英文消息。
 - 仅生成独立音频文件，不封装回 MKV、不解码视频或字幕，也不解析 DTS:X 对象。
 
-先按下文构建本机 **v3** FFmpeg 后端，然后执行：
+下文的平台构建入口默认同时生成 CLI 和 UI，并打包到同一发布目录。
+如果已经构建好本机 **v3** FFmpeg 后端，也可直接打包：
 
 ```bash
 # macOS 终端 / Windows MSYS2 UCRT64 终端
-bash scripts/build-ui.sh
+bash scripts/build-release.sh
 # 可指定尚不存在的发布目录
-bash scripts/build-ui.sh /absolute/path/to/new-ui-release
+bash scripts/build-release.sh /absolute/path/to/new-release
+# 仅构建 UI；原 build-ui.sh 入口也继续可用
+bash scripts/build-release.sh --target ui
 ```
 
 无需 Node.js、npm 或全局 Wails CLI；HTML/CSS/JavaScript 随 Go 程序嵌入，
 仍需 Go 1.24+、cgo 和原生 C 工具链。桌面使用 Wails v2，macOS 使用系统 WebKit，
 Windows 需要现代 Microsoft Edge WebView2 Evergreen Runtime（拖放需要较新版本）。
 这不是新增外部 FFmpeg 依赖。
-macOS 发布目录为 `dist/hdma2truehd-ui-darwin-<arch>/`，双击其中的
-`HDMA Converter.app`；Windows 为 `dist/hdma2truehd-ui-windows-<arch>/hdma2truehd-ui.exe`。
+macOS 默认发布目录为 `dist/hdma2truehd-darwin-<arch>/`，双击其中的
+`HDMA Converter.app`；Windows 为 `dist/hdma2truehd-windows-<arch>/hdma2truehd-ui.exe`。
+同一目录也包含 CLI `hdma2truehd`（Windows 为 `.exe`）。
+单独构建 UI 时仍使用原来的 `dist/hdma2truehd-ui-<os>-<arch>/` 默认目录。
 发布目录包含 FFmpeg 重新链接材料及实际链接的 Go 模块许可证；发布前自行签名/公证并审查许可。
 Windows 原生 UI 与拖放尚需实机验证。
 
@@ -155,14 +160,16 @@ SHA-256 校验工具。FFmpeg 构建脚本只生成静态库，不编译命令�
 
 | 模式 | macOS 参数 | Windows 参数 | 行为 |
 |---|---|---|---|
-| 完整发布（默认） | 无 | 无 | 构建静态库、测试、打包 LGPL 材料、重新链接及自检 |
+| 完整发布（默认） | 无 | 无 | 同时构建 CLI/UI，共享源码和许可证材料，分别重新链接；CLI 执行自检 |
 | 复用库完整发布 | `--reuse-backend` | `-ReuseBackend` | 复用现有库，其余发布步骤不变 |
-| 日常仅编译主程序 | `--binary-only` | `-BinaryOnly` | 必须已有本机静态库；仅编译主程序并检查动态依赖 |
+| 日常仅编译应用 | `--binary-only` | `-BinaryOnly` | 必须已有本机静态库；同时编译 CLI/UI 并检查动态依赖 |
+| 单独构建目标 | `--target cli` / `--target ui` | `-Target cli` / `-Target ui` | 只构建所选工具，可搭配完整发布或日常模式；默认 `both` |
 
 日常模式不下载、不重建 FFmpeg，不执行测试、`doctor` 或发布打包；
 无需 FFmpeg 原始源码归档及 make、curl、tar、xz、patch，但仍需 Go、原生 C 工具链，
 以及 macOS 的 `otool` 或 Windows UCRT64 的 `objdump`。
-该模式也使用 `go build -a`，避免替换静态库后误用缓存；已有主程序会被重新编译覆盖。
+该模式也使用 `go build -a`，避免替换静态库后误用缓存；已有应用会被重新编译覆盖。
+macOS 同时生成带图标的 `.app`；单目标日常构建不会删除另一个已有工具。
 它只用于本地开发，**不能代替附带 LGPL 材料的完整发布目录**。
 
 #### macOS
@@ -178,10 +185,16 @@ bash scripts/build-macos.sh --reuse-backend --output-dir dist/macos-new
 # 清理默认发布目录后重建，不重新编译 FFmpeg 静态库
 bash scripts/build-macos.sh --reuse-backend --clean
 
-# 日常开发：复用静态库，只编译 bin/hdma2truehd
+# 日常开发：复用静态库，编译 CLI、UI 和 macOS .app 到 bin/
 bash scripts/build-macos.sh --binary-only
 
-# 仅编译主程序到指定目录
+# 仅编译 CLI 到指定目录
+bash scripts/build-macos.sh --binary-only --target cli --output-dir bin/dev
+
+# 仅编译 UI（含 .app）
+bash scripts/build-macos.sh --binary-only --target ui
+
+# 两个工具编译到指定目录
 bash scripts/build-macos.sh --binary-only --output-dir bin/dev
 ```
 
@@ -222,10 +235,16 @@ pacman -S --needed make diffutils patch curl tar xz mingw-w64-ucrt-x86_64-gcc mi
 # 清理默认发布目录后重建，不重新编译 FFmpeg 静态库
 .\scripts\build-windows.ps1 -ReuseBackend -Clean
 
-# 日常开发：复用静态库，只编译 bin\hdma2truehd.exe
+# 日常开发：复用静态库，同时编译两个 EXE 到 bin\
 .\scripts\build-windows.ps1 -BinaryOnly
 
-# 仅编译主程序到指定目录
+# 仅编译 CLI 到指定目录
+.\scripts\build-windows.ps1 -BinaryOnly -Target cli -OutputDir 'bin\dev'
+
+# 仅编译 UI
+.\scripts\build-windows.ps1 -BinaryOnly -Target ui
+
+# 两个工具编译到指定目录
 .\scripts\build-windows.ps1 -BinaryOnly -OutputDir 'bin\dev'
 ```
 
@@ -240,7 +259,10 @@ Windows 链接配置使用静态 GCC 运行库；仍需通过 Windows 原生 CI/
 确认实际系统 DLL 依赖及兼容性。
 
 两个平台完整发布默认输出 `dist/hdma2truehd-<os>-<arch>/`，
-仅编译主程序默认输出 `bin/hdma2truehd` 或 `bin/hdma2truehd.exe`。
+包含 CLI、UI，以及 macOS 的 `HDMA Converter.app`。
+CLI 的重新链接材料在 `relink/`，UI 的在 `relink-ui/`；FFmpeg 源码和许可证只打包一次。
+单目标发布使用 `relink/`；单独 UI 发布的默认目录为 `dist/hdma2truehd-ui-<os>-<arch>/`。
+日常模式默认将两种程序输出到 `bin/`，macOS 还生成 `bin/HDMA Converter.app`。
 macOS 构建会检查仅依赖系统动态库；Windows 会检查没有 FFmpeg/GCC 运行库 DLL 依赖。
 相对输出目录以项目根目录为基准。底层 `build-ffmpeg.sh` 和 `build-release.sh`
 继续作为公共步骤保留，避免复制 FFmpeg 配置和许可证打包逻辑。
@@ -431,11 +453,12 @@ bash scripts/build-release.sh
 
 bash dist/hdma2truehd-darwin-arm64/relink/relink.sh
 dist/hdma2truehd-darwin-arm64/hdma2truehd-relinked doctor
+bash dist/hdma2truehd-darwin-arm64/relink-ui/relink.sh
 ```
 
 发布目录包含：
 
-- 单文件程序。
+- CLI、UI 单文件程序，以及 macOS `.app`；可用 `--target cli` / `--target ui` 只打包一种。
 - Go/cgo 可重新链接对象、FFmpeg 静态库、链接脚本、Windows 导出定义文件（如有），
   以及捕获的原始外部链接命令；重新链接不依赖 Go 临时构建目录。
 - FFmpeg 原始源码归档、补丁、配置后的完整源码、构建脚本和工具链信息。
@@ -506,13 +529,16 @@ as `DTS-HD MA`; that label does not prove that object metadata is absent.
 - Outputs are separate audio files, not a remuxed MKV. No video/subtitle
   decoding or DTS:X object rendering is added.
 
-Build the native **v3** FFmpeg backend below first, then run:
+The platform build entry points below now build CLI and UI into one release by
+default. With an existing native **v3** FFmpeg backend, package them directly:
 
 ```bash
 # macOS terminal / Windows MSYS2 UCRT64 terminal
-bash scripts/build-ui.sh
+bash scripts/build-release.sh
 # Optionally choose a new, nonexistent release directory
-bash scripts/build-ui.sh /absolute/path/to/new-ui-release
+bash scripts/build-release.sh /absolute/path/to/new-release
+# UI only; the original build-ui.sh entry point remains available too
+bash scripts/build-release.sh --target ui
 ```
 
 No Node.js, npm or global Wails CLI is needed: HTML/CSS/JavaScript are embedded.
@@ -520,8 +546,10 @@ Go 1.24+, cgo and a native C toolchain are still required. Wails v2 uses system
 WebKit on macOS and requires a modern Microsoft Edge WebView2 Evergreen Runtime
 on Windows (recent versions are needed for file drop). No external FFmpeg
 dependency is introduced.
-Open `HDMA Converter.app` inside `dist/hdma2truehd-ui-darwin-<arch>/` on macOS;
-run `dist/hdma2truehd-ui-windows-<arch>/hdma2truehd-ui.exe` on Windows.
+Open `HDMA Converter.app` inside `dist/hdma2truehd-darwin-<arch>/` on macOS;
+run `dist/hdma2truehd-windows-<arch>/hdma2truehd-ui.exe` on Windows.
+The same directory contains the CLI `hdma2truehd` (`.exe` on Windows).
+UI-only releases retain the default `dist/hdma2truehd-ui-<os>-<arch>/` directory.
 Releases include FFmpeg relinking materials and licenses for linked Go modules.
 Review distribution obligations and sign/notarize as needed. Native Windows UI
 and drag-and-drop still require on-device validation.
@@ -650,15 +678,18 @@ libraries or executables:
 
 | Mode | macOS option | Windows option | Behavior |
 |---|---|---|---|
-| Full release (default) | None | None | Build libraries, test, package LGPL materials, relink and self-test |
+| Full release (default) | None | None | Build CLI/UI together, sharing sources and notices; relink each and run CLI self-tests |
 | Full release with reused libraries | `--reuse-backend` | `-ReuseBackend` | Reuse libraries; keep all other release steps |
-| Local executable-only build | `--binary-only` | `-BinaryOnly` | Require existing native static libraries; build the executable and check dynamic dependencies |
+| Local executable-only build | `--binary-only` | `-BinaryOnly` | Require existing native static libraries; build both applications and check dynamic dependencies |
+| Single target | `--target cli` / `--target ui` | `-Target cli` / `-Target ui` | Select one application in release or local mode; default is `both` |
 
 Executable-only mode does not download/rebuild FFmpeg, run tests or `doctor`,
 or package a release. It does not require the original FFmpeg source archive,
 make, curl, tar, xz or patch, but still needs Go, a native C toolchain and
 macOS `otool` or Windows UCRT64 `objdump`. It also uses `go build -a` and replaces
-the existing executable. It is for local development and **does not replace a
+the existing applications. macOS also gets an app bundle with its icon.
+Single-target local builds leave the other existing application untouched.
+It is for local development and **does not replace a
 complete release with LGPL materials**.
 
 #### macOS
@@ -674,10 +705,16 @@ bash scripts/build-macos.sh --reuse-backend --output-dir dist/macos-new
 # Clean and rebuild the default release without rebuilding FFmpeg
 bash scripts/build-macos.sh --reuse-backend --clean
 
-# Local development: reuse libraries and rebuild bin/hdma2truehd only
+# Local development: rebuild CLI, UI and macOS app bundle in bin/
 bash scripts/build-macos.sh --binary-only
 
-# Build only the executable in a custom directory
+# Build only the CLI in a custom directory
+bash scripts/build-macos.sh --binary-only --target cli --output-dir bin/dev
+
+# Build only the UI (including its app bundle)
+bash scripts/build-macos.sh --binary-only --target ui
+
+# Build both applications in a custom directory
 bash scripts/build-macos.sh --binary-only --output-dir bin/dev
 ```
 
@@ -722,10 +759,16 @@ Then run from the project directory in **PowerShell**:
 # Clean and rebuild the default release without rebuilding FFmpeg
 .\scripts\build-windows.ps1 -ReuseBackend -Clean
 
-# Local development: rebuild bin\hdma2truehd.exe only
+# Local development: rebuild both EXEs in bin\
 .\scripts\build-windows.ps1 -BinaryOnly
 
-# Build only the executable in a custom directory
+# Build only the CLI in a custom directory
+.\scripts\build-windows.ps1 -BinaryOnly -Target cli -OutputDir 'bin\dev'
+
+# Build only the UI
+.\scripts\build-windows.ps1 -BinaryOnly -Target ui
+
+# Build both applications in a custom directory
 .\scripts\build-windows.ps1 -BinaryOnly -OutputDir 'bin\dev'
 ```
 
@@ -742,8 +785,13 @@ cannot replace a native build. Windows linking uses the static GCC runtime;
 actual system DLL dependencies and compatibility still need native Windows
 CI/runtime validation.
 
-Full releases default to `dist/hdma2truehd-<os>-<arch>/` on both platforms;
-executable-only builds default to `bin/hdma2truehd` or `bin/hdma2truehd.exe`.
+Full releases default to `dist/hdma2truehd-<os>-<arch>/` on both platforms,
+containing CLI, UI and the macOS `HDMA Converter.app`.
+CLI relinking inputs live in `relink/`; UI inputs live in `relink-ui/`.
+FFmpeg sources and licenses are packaged once. Single-target releases use
+`relink/`; UI-only releases default to `dist/hdma2truehd-ui-<os>-<arch>/`.
+Executable-only builds place both applications in `bin/`, including
+`bin/HDMA Converter.app` on macOS.
 macOS checks that dynamic dependencies are system libraries only; Windows checks
 that there are no FFmpeg/GCC runtime DLL dependencies. Relative output directories
 are resolved from the project root.
@@ -976,11 +1024,13 @@ bash scripts/build-release.sh
 
 bash dist/hdma2truehd-darwin-arm64/relink/relink.sh
 dist/hdma2truehd-darwin-arm64/hdma2truehd-relinked doctor
+bash dist/hdma2truehd-darwin-arm64/relink-ui/relink.sh
 ```
 
 The release contains:
 
-- The single executable.
+- CLI and UI executables, plus the macOS app bundle; use `--target cli` or
+  `--target ui` to package just one application.
 - Relinkable Go/cgo objects, FFmpeg static libraries, linker scripts, Windows
   export definitions when present, and the captured external link command.
   Relinking does not depend on Go's temporary build directory.

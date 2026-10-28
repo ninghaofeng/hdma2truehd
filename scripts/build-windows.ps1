@@ -2,6 +2,8 @@
 param(
     [string]$Msys2Root = $(if ($env:MSYS2_ROOT) { $env:MSYS2_ROOT } else { 'C:\msys64' }),
     [string]$OutputDir,
+    [ValidateSet('both', 'cli', 'ui')]
+    [string]$Target = 'both',
     [switch]$ReuseBackend,
     [switch]$BinaryOnly,
     [switch]$InstallDependencies,
@@ -24,7 +26,7 @@ if (-not (Get-Command go.exe -ErrorAction SilentlyContinue)) {
 $common = (Join-Path $PSScriptRoot 'build-common.sh').Replace('\', '/')
 # Translate switches into arguments for the shared orchestration; do not
 # duplicate dependency installation, cleanup or release logic in PowerShell.
-$buildArgs = @('windows')
+$buildArgs = @('windows', '--target', $Target.ToLowerInvariant())
 if ($BinaryOnly) {
     $buildArgs += '--binary-only'
 }
