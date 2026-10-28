@@ -2,7 +2,8 @@
 param(
     [string]$Msys2Root = $(if ($env:MSYS2_ROOT) { $env:MSYS2_ROOT } else { 'C:\msys64' }),
     [string]$OutputDir,
-    [switch]$ReuseBackend
+    [switch]$ReuseBackend,
+    [switch]$BinaryOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,6 +21,9 @@ if (-not (Get-Command go.exe -ErrorAction SilentlyContinue)) {
 
 $common = (Join-Path $PSScriptRoot 'build-common.sh').Replace('\', '/')
 $buildArgs = @('windows')
+if ($BinaryOnly) {
+    $buildArgs += '--binary-only'
+}
 if ($ReuseBackend) {
     $buildArgs += '--reuse-backend'
 }

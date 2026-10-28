@@ -35,12 +35,27 @@ restart header、声道顺序和极短输入 flush。库版本在运行时检查
 SHA-256 校验工具。FFmpeg 构建脚本只生成静态库，不编译命令行程序。
 构建环境需要这些工具，最终用户运行单个程序时不需要。
 
-库路径固定为 `.backend/ffmpeg-8.0.1/`。平台入口会依次构建静态库、运行测试和
+库路径固定为 `.backend/ffmpeg-8.0.1/`。平台入口默认依次构建静态库、运行测试和
 静态检查、生成 LGPL 完整发布目录，并验证重新链接和 `doctor` 自检。
 已有源码目录时默认拒绝覆盖，防止破坏本地改动；可以显式复用现有库，
 或先将旧目录重命名备份再重建。已有发布目录始终拒绝覆盖。
 替换静态库后应使用 `go build -a` / `go test -a` 强制重新链接，避免 Go 缓存
 继续使用外部库的旧版本。
+
+两平台共用构建流程，始终通过 cgo 链接四个 FFmpeg `.a` 静态库，
+不依赖系统安装的 FFmpeg 动态库或命令行程序：
+
+| 模式 | macOS 参数 | Windows 参数 | 行为 |
+|---|---|---|---|
+| 完整发布（默认） | 无 | 无 | 构建静态库、测试、打包 LGPL 材料、重新链接及自检 |
+| 复用库完整发布 | `--reuse-backend` | `-ReuseBackend` | 复用现有库，其余发布步骤不变 |
+| 日常仅编译主程序 | `--binary-only` | `-BinaryOnly` | 必须已有本机静态库；仅编译主程序并检查动态依赖 |
+
+日常模式不下载、不重建 FFmpeg，不执行测试、`doctor` 或发布打包；
+无需 FFmpeg 原始源码归档及 make、curl、tar、xz、patch，但仍需 Go、原生 C 工具链，
+以及 macOS 的 `otool` 或 Windows UCRT64 的 `objdump`。
+该模式也使用 `go build -a`，避免替换静态库后误用缓存；已有主程序会被重新编译覆盖。
+它只用于本地开发，**不能代替附带 LGPL 材料的完整发布目录**。
 
 ### macOS
 
@@ -51,6 +66,12 @@ bash scripts/build-macos.sh
 
 # 已有本机静态库时复用，并选择新的发布目录
 bash scripts/build-macos.sh --reuse-backend --output-dir dist/macos-new
+
+# 日常开发：复用静态库，只编译 bin/hdma2truehd
+bash scripts/build-macos.sh --binary-only
+
+# 仅编译主程序到指定目录
+bash scripts/build-macos.sh --binary-only --output-dir bin/dev
 ```
 
 ### Windows
@@ -71,6 +92,12 @@ pacman -S --needed make diffutils patch curl tar xz mingw-w64-ucrt-x86_64-gcc
 
 # 复用已经编译的 Windows 静态库
 .\scripts\build-windows.ps1 -ReuseBackend -OutputDir 'dist\windows-new'
+
+# 日常开发：复用静态库，只编译 bin\hdma2truehd.exe
+.\scripts\build-windows.ps1 -BinaryOnly
+
+# 仅编译主程序到指定目录
+.\scripts\build-windows.ps1 -BinaryOnly -OutputDir 'bin\dev'
 ```
 
 默认 MSYS2 路径为 `C:\msys64`，也可以通过 `MSYS2_ROOT` 环境变量指定。
@@ -82,7 +109,9 @@ FFmpeg 与 Go/cgo 必须使用匹配的目标架构和工具链；
 Windows 链接配置使用静态 GCC 运行库；仍需通过 Windows 原生 CI/运行验证
 确认实际系统 DLL 依赖及兼容性。
 
-两个平台默认输出 `dist/hdma2truehd-<os>-<arch>/`。
+两个平台完整发布默认输出 `dist/hdma2truehd-<os>-<arch>/`，
+仅编译主程序默认输出 `bin/hdma2truehd` 或 `bin/hdma2truehd.exe`。
+macOS 构建会检查仅依赖系统动态库；Windows 会检查没有 FFmpeg/GCC 运行库 DLL 依赖。
 相对输出目录以项目根目录为基准。底层 `build-ffmpeg.sh` 和 `build-release.sh`
 继续作为公共步骤保留，避免复制 FFmpeg 配置和许可证打包逻辑。
 Go 链接辅助工具位于 `tools/link-wrapper/`，参与普通 `go test ./...`，
@@ -148,8 +177,8 @@ Blu-ray 上限是八声道 96 kHz、六声道 192 kHz。
 将有权测试的 `.dts` / `.dtshd` 文件放入 `samples/`，然后运行：
 
 ```sh
-# 已构建静态库时，编译当前主程序
-go build -o bin/hdma2truehd ./cmd/hdma2truehd
+# macOS：已构建静态库时，编译当前主程序
+bash scripts/build-macos.sh --binary-only
 bash scripts/test-samples.sh
 
 # 显式覆盖已有 .thd，重新转换并完整校验
@@ -159,12 +188,27 @@ bash scripts/test-samples.sh --overwrite
 bash scripts/test-samples.sh --binary ./dist/hdma2truehd-darwin-arm64/hdma2truehd
 ```
 
-脚本默认调用 `bin/hdma2truehd`（Windows 下为 `.exe`），不自动构建。
+Windows 在 PowerShell 中运行，无需通过 MSYS2 Bash 启动测试：
+
+```powershell
+# 已构建静态库时，编译当前主程序
+.\scripts\build-windows.ps1 -BinaryOnly
+.\scripts\test-samples.ps1
+
+# 显式覆盖已有 .thd，重新转换并完整校验
+.\scripts\test-samples.ps1 -Overwrite
+
+# 测试指定的发布程序
+.\scripts\test-samples.ps1 -Binary '.\dist\hdma2truehd-windows-amd64\hdma2truehd.exe'
+```
+
+测试脚本默认调用 `bin/hdma2truehd`（PowerShell 脚本为 `bin/hdma2truehd.exe`），不自动构建。
 扫描仓库 `samples/` 顶层的输入文件，扩展名不区分大小写，
 将同名 `.thd` 写回该目录，不处理已有 `.thd`，也不修改输入。
 默认保留完整 PCM 校验，不覆盖已有输出；任何转换失败均返回非零退出码。
-可从任意工作目录运行脚本；`--binary` 的相对路径以当前工作目录为准。
-Windows 可在 MSYS2 UCRT64 Bash 中运行，先构建 `.exe` 或使用 `--binary` 指定发布程序。
+可从任意工作目录运行脚本；`--binary` / `-Binary` 的相对路径以当前工作目录为准。
+PowerShell 脚本直接传递主程序退出码；测试本身不需要 MSYS2、Go 或外部 FFmpeg。
+Windows 也可在 MSYS2 UCRT64 Bash 中运行 Bash 测试脚本。
 
 ### 自动化测试
 
