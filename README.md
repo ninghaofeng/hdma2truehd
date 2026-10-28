@@ -38,7 +38,13 @@ SHA-256 校验工具。FFmpeg 构建脚本只生成静态库，不编译命令�
 库路径固定为 `.backend/ffmpeg-8.0.1/`。平台入口默认依次构建静态库、运行测试和
 静态检查、生成 LGPL 完整发布目录，并验证重新链接和 `doctor` 自检。
 已有源码目录时默认拒绝覆盖，防止破坏本地改动；可以显式复用现有库，
-或先将旧目录重命名备份再重建。已有发布目录始终拒绝覆盖。
+或先将旧目录重命名备份再重建。已有发布目录默认拒绝覆盖；
+可显式使用 `--clean`（Windows 为 `-Clean`）清理本次发布目录后重新构建。
+清理仅允许项目 `dist/` 的直接子目录，拒绝符号链接，不删除 `dist/` 本身、
+`.backend/`、`bin/`、`samples/` 或其他发布目录。
+依赖和后端检查通过后才清理；后续构建若失败，被清理的旧发布结果不会恢复。
+`--clean` 不重建静态库，已有静态库时请搭配 `--reuse-backend`；
+日常 `--binary-only` 已覆盖主程序，无需且不能搭配 `--clean`。
 替换静态库后应使用 `go build -a` / `go test -a` 强制重新链接，避免 Go 缓存
 继续使用外部库的旧版本。
 
@@ -66,6 +72,9 @@ bash scripts/build-macos.sh
 
 # 已有本机静态库时复用，并选择新的发布目录
 bash scripts/build-macos.sh --reuse-backend --output-dir dist/macos-new
+
+# 清理默认发布目录后重建，不重新编译 FFmpeg 静态库
+bash scripts/build-macos.sh --reuse-backend --clean
 
 # 日常开发：复用静态库，只编译 bin/hdma2truehd
 bash scripts/build-macos.sh --binary-only
@@ -107,6 +116,9 @@ pacman -S --needed make diffutils patch curl tar xz mingw-w64-ucrt-x86_64-gcc mi
 
 # 复用已经编译的 Windows 静态库
 .\scripts\build-windows.ps1 -ReuseBackend -OutputDir 'dist\windows-new'
+
+# 清理默认发布目录后重建，不重新编译 FFmpeg 静态库
+.\scripts\build-windows.ps1 -ReuseBackend -Clean
 
 # 日常开发：复用静态库，只编译 bin\hdma2truehd.exe
 .\scripts\build-windows.ps1 -BinaryOnly

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
+root="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$root"
 platform="${1:?Pass macos or windows}"
 shift
 reuse=false
 binary_only=false
 install_deps=false
+clean=false
 destination=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -23,6 +24,10 @@ while [[ $# -gt 0 ]]; do
             install_deps=true
             shift
             ;;
+        --clean)
+            clean=true
+            shift
+            ;;
         --output-dir)
             if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
                 printf '%s\n' '--output-dir requires a directory.' >&2
@@ -32,11 +37,12 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --help|-h)
-            printf 'Usage: build-macos.sh [--binary-only] [--reuse-backend] [--output-dir DIR]\n'
-            printf 'Windows: build-windows.ps1 [-Msys2Root PATH] [-BinaryOnly] [-ReuseBackend] [-InstallDependencies] [-OutputDir DIR]\n'
+            printf 'Usage: build-macos.sh [--binary-only] [--reuse-backend] [--clean] [--output-dir DIR]\n'
+            printf 'Windows: build-windows.ps1 [-Msys2Root PATH] [-BinaryOnly] [-ReuseBackend] [-InstallDependencies] [-Clean] [-OutputDir DIR]\n'
             printf 'Default: build libraries, test and package a complete release in dist/.\n'
             printf 'Binary-only: reuse existing static libraries and rebuild bin/hdma2truehd (no tests or release materials).\n'
             printf 'Windows --install-deps: install MSYS2 prerequisites with pacman --needed, then build (confirmation required).\n'
+            printf 'Clean: remove only the selected release directory directly inside project dist/ before building; static libraries are preserved.\n'
             exit 0
             ;;
         *)
@@ -45,6 +51,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ "$clean" == true && "$binary_only" == true ]]; then
+    printf '%s\n' '--clean is for full releases; --binary-only already replaces the executable without removing its output directory.' >&2
+    exit 2
+fi
 
 case "$platform" in
     macos)
@@ -142,8 +153,27 @@ if [[ -z "$destination" ]]; then
         destination="$root/dist/hdma2truehd-$target-$(go env GOARCH)"
     fi
 fi
-if [[ "$binary_only" == false && -e "$destination" ]]; then
-    printf 'Refusing to overwrite release directory: %s\nChoose another output directory.\n' "$destination" >&2
+if [[ "$clean" == true ]]; then
+    if [[ -L "$root/dist" ]]; then
+        printf 'Refusing to clean through a symlinked dist directory.\n' >&2
+        exit 1
+    fi
+    mkdir -p "$root/dist"
+    release_root="$(cd "$root/dist" && pwd -P)"
+    output_parent="$(dirname "$destination")"
+    output_name="$(basename "$destination")"
+    if [[ "$output_name" == "." || "$output_name" == ".." ||
+          ! -d "$output_parent" || "$(cd "$output_parent" && pwd -P)" != "$release_root" ]]; then
+        printf 'Refusing to clean %s: choose a release directory directly inside %s.\n' "$destination" "$release_root" >&2
+        exit 1
+    fi
+    destination="$release_root/$output_name"
+    if [[ -L "$destination" || ( -e "$destination" && ! -d "$destination" ) ]]; then
+        printf 'Refusing to clean a symlink or non-directory output: %s\n' "$destination" >&2
+        exit 1
+    fi
+elif [[ "$binary_only" == false && ( -e "$destination" || -L "$destination" ) ]]; then
+    printf 'Refusing to overwrite release directory: %s\nChoose another output directory, or use --clean (-Clean on Windows) for a release directly inside dist/.\n' "$destination" >&2
     exit 1
 fi
 
@@ -170,6 +200,11 @@ if [[ "$binary_only" == true ]]; then
     check_static_dependencies "$destination/hdma2truehd$suffix"
     printf '\nStatic-library binary built: %s/hdma2truehd%s\nTests and release packaging were not run; use the full build before distribution.\n' "$destination" "$suffix"
     exit 0
+fi
+
+if [[ "$clean" == true && -d "$destination" ]]; then
+    printf 'Cleaning release directory: %s\n' "$destination"
+    rm -r -- "$destination"
 fi
 
 if [[ "$platform" == macos ]]; then

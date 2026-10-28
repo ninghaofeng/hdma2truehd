@@ -4,7 +4,8 @@ param(
     [string]$OutputDir,
     [switch]$ReuseBackend,
     [switch]$BinaryOnly,
-    [switch]$InstallDependencies
+    [switch]$InstallDependencies,
+    [switch]$Clean
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,6 +31,9 @@ if ($InstallDependencies) {
 }
 if ($ReuseBackend) {
     $buildArgs += '--reuse-backend'
+}
+if ($Clean) {
+    $buildArgs += '--clean'
 }
 if ($OutputDir) {
     $buildArgs += @('--output-dir', $OutputDir.Replace('\', '/'))
