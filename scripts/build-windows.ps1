@@ -23,6 +23,13 @@ if (-not (Test-Path -LiteralPath $bash -PathType Leaf)) {
 if (-not (Get-Command go.exe -ErrorAction SilentlyContinue)) {
     throw 'Go is not on PATH. Install Go 1.24 or newer before building.'
 }
+$goArch = (& go.exe env GOARCH).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'Cannot determine Go architecture.' }
+switch ($goArch) {
+    'amd64' { $msystem = 'UCRT64' }
+    'arm64' { $msystem = 'CLANGARM64' }
+    default { throw "Unsupported Windows Go architecture: $goArch. Use native x64 or ARM64 Go." }
+}
 
 $common = (Join-Path $PSScriptRoot 'build-common.sh').Replace('\', '/')
 # Translate switches into arguments for the shared orchestration; do not
@@ -51,13 +58,13 @@ if ($OutputDir) {
 
 $names = @('MSYSTEM', 'MSYS2_PATH_TYPE', 'CHERE_INVOKING')
 # Scope the MSYS2 environment to this invocation. Inheriting PATH makes the
-# user's native Go visible, while UCRT64 selects the matching C toolchain.
+# user's native Go visible, while MSYSTEM selects its matching C toolchain.
 $previous = @{}
 foreach ($name in $names) {
     $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 try {
-    $env:MSYSTEM = 'UCRT64'
+    $env:MSYSTEM = $msystem
     $env:MSYS2_PATH_TYPE = 'inherit'
     $env:CHERE_INVOKING = '1'
     # Pass paths as arguments, not interpolated shell commands.

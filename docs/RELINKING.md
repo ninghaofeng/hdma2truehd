@@ -22,11 +22,20 @@ bash relink/relink.sh
 ./hdma2truehd-relinked doctor
 ```
 
-On Windows, run the script from an MSYS2 UCRT64 terminal and run
+On Windows x64, use an MSYS2 UCRT64 terminal (GCC); on Windows ARM64, use
+CLANGARM64 (Clang). Run
 `./hdma2truehd-relinked.exe doctor`. Set `CC` to the compiler executable if
 necessary. Platform SDK paths in the captured command may need adjustment
 for your machine. Code signing, if required by your platform, must be performed
 again after re-linking.
+
+On macOS, retain `MACOSX_DEPLOYMENT_TARGET=12.0` and a compatible SDK/compiler
+when rebuilding FFmpeg or relinking. The captured application objects include
+the original Go runtime: changing FFmpeg or linker flags cannot lower that
+runtime's OS requirements. Release objects use Go 1.26.x; rebuilding the
+application with Go 1.27 would require macOS 13 or later.
+The FFmpeg build script sources the included `build-env.sh` to apply the same
+deployment target as cgo.
 
 Default releases contain both CLI and UI, with separate captured application
 objects. The CLI uses `relink/`; build the UI with:

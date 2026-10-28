@@ -14,11 +14,11 @@ import (
 	"strings"
 
 	"github.com/ninghaofeng/hdma2truehd/internal/audio"
+	"github.com/ninghaofeng/hdma2truehd/internal/buildinfo"
 )
 
-var version = "dev"
-
-const help = `hdma2truehd - DTS-HD MA to TrueHD / E-AC-3 (experimental)
+const help = "hdma2truehd " + buildinfo.Version + "\n" + buildinfo.Copyright + `
+DTS-HD MA to TrueHD / E-AC-3 (experimental)
 
 Usage:
   hdma2truehd doctor
@@ -60,7 +60,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return 0
 	}
 	if args[0] == "version" {
-		fmt.Fprintf(out, "hdma2truehd %s\n", version)
+		fmt.Fprintf(out, "hdma2truehd %s\n%s\n", buildinfo.Version, buildinfo.Copyright)
 		return 0
 	}
 	command := args[0]

@@ -3,6 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
+source "$root/scripts/build-env.sh"
 build_target=both
 # Preserve explicit legacy callers, but an ordinary invocation builds both.
 case "${HDMA_UI:-}" in
@@ -64,27 +65,32 @@ if [[ "$(go env CGO_ENABLED)" != 1 ]]; then
 fi
 os="$(go env GOOS)"
 arch="$(go env GOARCH)"
+check_release_toolchain
 if [[ "$build_target" != cli && "$os" != darwin && "$os" != windows ]]; then
     printf 'The desktop UI supports macOS and Windows only; use --target cli on other platforms.\n' >&2
     exit 1
 fi
-resource=""
+resources=()
+metadata=""
 wrapper=""
 cleanup() {
-    if [[ -n "$resource" ]]; then rm -f -- "$resource"; fi
+    for resource in ${resources[@]+"${resources[@]}"}; do rm -f -- "$resource"; done
+    if [[ -n "$metadata" ]]; then rm -r -- "$metadata"; fi
     if [[ -n "$wrapper" ]]; then rm -f -- "$wrapper"; fi
 }
 trap cleanup EXIT
-if [[ "$build_target" != cli && "$os" == windows ]]; then
+if [[ "$os" == windows ]]; then
     if ! command -v windres >/dev/null 2>&1; then
-        printf 'windres is required for the Windows application icon; install UCRT64 binutils.\n' >&2
+        printf 'windres is required for Windows version/icon resources; install the matching MSYS2 toolchain.\n' >&2
         exit 1
     fi
-    resource_path="$root/cmd/hdma2truehd-ui/resource_windows_${arch}.syso"
-    if [[ -e "$resource_path" || -L "$resource_path" ]]; then
-        printf 'Refusing to overwrite an existing resource object: %s\n' "$resource_path" >&2
-        exit 1
-    fi
+    for app in "${apps[@]}"; do
+        resource_path="$root/cmd/$app/resource_windows_${arch}.syso"
+        if [[ -e "$resource_path" || -L "$resource_path" ]]; then
+            printf 'Refusing to overwrite an existing resource object: %s\n' "$resource_path" >&2
+            exit 1
+        fi
+    done
 fi
 if [[ -z "$destination" ]]; then
     if [[ "$binary_only" == true ]]; then
@@ -103,6 +109,10 @@ mkdir -p "$destination"
 destination="$(cd "$destination" && pwd)"
 export HDMA_CC="${CC:-cc}"
 export HDMA_EXE_SUFFIX=""
+metadata="$(mktemp -d "$destination/.metadata-XXXXXX")"
+# Pure Go generation also works before the media backend is linked.
+CGO_ENABLED=0 go run ./tools/build-metadata --output-dir "$metadata"
+cp "$metadata/VERSION.txt" "$destination/"
 native_destination="$destination"
 if [[ "$os" == windows ]]; then
     # Go and its linker wrapper are native Windows programs, unlike this MSYS2
@@ -116,12 +126,16 @@ if [[ "$binary_only" == false ]]; then
     CGO_ENABLED=0 go build -o "$wrapper" ./tools/link-wrapper
     build_path="$destination:$PATH"
 fi
-if [[ "$build_target" != cli && "$os" == windows ]]; then
-    resource="$resource_path"
+if [[ "$os" == windows ]]; then
     # Go embeds this COFF object in the PE executable. The captured application
     # objects also retain it for LGPL relinking after the source copy is removed.
-    windres -I "$root/cmd/hdma2truehd-ui" -i "$root/cmd/hdma2truehd-ui/app.rc" \
-        -O coff -o "$resource"
+    for app in "${apps[@]}"; do
+        resource="$root/cmd/$app/resource_windows_${arch}.syso"
+        resources+=("$resource")
+        input="$metadata/cli.rc"
+        if [[ "$app" == hdma2truehd-ui ]]; then input="$root/cmd/$app/app.rc"; fi
+        windres -I "$metadata" -I "$root/cmd/hdma2truehd-ui" -i "$input" -O coff -o "$resource"
+    done
 fi
 packages=()
 for app in "${apps[@]}"; do
@@ -147,12 +161,15 @@ for app in "${apps[@]}"; do
     PATH="$build_path" go build -a -trimpath \
         -tags "$tags" -ldflags="$ldflags" \
         -o "$destination/$app$HDMA_EXE_SUFFIX" "$package"
+    if [[ "$os" == darwin ]]; then
+        check_macos_deployment_target "$destination/$app"
+    fi
     if [[ "$binary_only" == false ]]; then test -s "$HDMA_RELINK_DIR/relink.sh"; fi
 done
 if [[ "$build_target" != cli && "$os" == darwin ]]; then
     bundle="$destination/HDMA Converter.app/Contents"
     mkdir -p "$bundle/MacOS" "$bundle/Resources"
-    cp cmd/hdma2truehd-ui/Info.plist "$bundle/"
+    cp "$metadata/Info.plist" "$bundle/"
     cp cmd/hdma2truehd-ui/assets/app.icns "$bundle/Resources/"
     cp "$destination/hdma2truehd-ui" "$bundle/MacOS/"
 fi
@@ -173,6 +190,7 @@ cp docs/RELINKING.md "$destination/RELINKING.md"
 cp patches/ffmpeg/0001-truehd-7.1-and-short-streams.patch \
     patches/ffmpeg/0002-eac3-dependent-7.1.patch "$destination/source/patches/ffmpeg/"
 cp scripts/build-ffmpeg.sh "$destination/source/scripts/"
+cp scripts/build-env.sh "$destination/source/scripts/"
 if [[ "$build_target" != cli ]]; then
     cp go.mod go.sum "$destination/source/"
     cp scripts/build-ui.sh scripts/build-release.sh "$destination/source/scripts/"

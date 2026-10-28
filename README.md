@@ -27,6 +27,38 @@ PCM 一致性校验只覆盖解码后的兼容声道，不表示完整保留 DTS
 > DTS:X 5.1、IMAX 真实样本、Windows 原生运行和硬件播放兼容性尚未在本地验证。
 > 这不是 Dolby 认证的编码器，也不保证 Blu-ray 合规。
 
+### v1.0.0、系统要求与发布
+
+CLI 的 `hdma2truehd version`、帮助信息和 UI 页脚统一显示 **v1.0.0** 与
+`Copyright (c) 2026 ninghaofeng`。版本、版权和系统要求集中在
+[`internal/buildinfo/info.go`](internal/buildinfo/info.go)；
+macOS 应用元数据和 Windows CLI/UI 文件版本由构建工具生成。
+系统要求数字版本的字段使用 `1.0.0`。
+
+| 发布平台 | 归档中的架构名 | 最低支持系统 |
+|---|---|---|
+| macOS Apple Silicon | `darwin-arm64` | macOS 12.0 |
+| macOS Intel | `darwin-amd64` | macOS 12.0 |
+| Windows x64 | `windows-amd64` | Windows 10 22H2，build 19045 |
+| Windows ARM64 | `windows-arm64` | Windows 11 24H2，build 26100 |
+
+发布 CI 使用 **Go 1.26.x**，四个平台均原生构建，不通过纯 Go 交叉编译代替 cgo。
+macOS 的 FFmpeg、cgo 和重新链接结果都以 12.0 为部署目标，并检查实际 Mach-O
+最低系统版本；旧库若提高该版本，必须重建后端。
+[Go 1.26 是最后支持 macOS 12 的版本](https://go.dev/doc/go1.26#darwin)，
+不能用 Go 1.27 加部署参数来恢复其已移除的系统支持。
+这些是发布支持基线，不代表已经完成最低版本系统上的实机验收；
+Windows build 号是支持政策，并非程序内的启动拦截。
+Windows UI 还需要匹配架构的 Microsoft Edge WebView2 Evergreen Runtime。
+
+GitHub Actions 在普通提交和 PR 上构建、测试并上传四份完整发布归档。
+推送与源码版本一致的 `v1.0.0` 标签后，四个平台全部成功才创建 **草稿 Release**，
+由维护者验收后手动公开；标签与源码版本不一致会失败。
+macOS 使用 `.tar.gz` 保留执行权限，Windows 使用 `.zip`，
+命名为 `hdma2truehd-v1.0.0-<os>-<arch>`，附每份归档的 `.sha256` 和汇总 `SHA256SUMS`。
+归档包含 CLI、UI、FFmpeg 源码、许可证和两套重新链接材料；
+当前流水线不执行代码签名或 macOS 公证。
+
 ### 桌面界面（macOS / Windows）
 
 - 批量选择或拖入 `.dts`、`.dtshd`、`.mkv`，直接读取本地文件，不上传或复制整部 MKV。
@@ -46,7 +78,9 @@ PCM 一致性校验只覆盖解码后的兼容声道，不表示完整保留 DTS
 如果已经构建好本机 **v3** FFmpeg 后端，也可直接打包：
 
 ```bash
-# macOS 终端 / Windows MSYS2 UCRT64 终端
+# macOS 终端 / Windows MSYS2 UCRT64 或 CLANGARM64 终端
+# 使用兼容的发布工具链
+export GOTOOLCHAIN=go1.26.10
 bash scripts/build-release.sh
 # 可指定尚不存在的发布目录
 bash scripts/build-release.sh /absolute/path/to/new-release
@@ -55,7 +89,8 @@ bash scripts/build-release.sh --target ui
 ```
 
 无需 Node.js、npm 或全局 Wails CLI；HTML/CSS/JavaScript 随 Go 程序嵌入，
-仍需 Go 1.24+、cgo 和原生 C 工具链。桌面使用 Wails v2，macOS 使用系统 WebKit，
+模块最低 Go 版本为 1.24，发布使用 Go 1.26.x；macOS 构建只接受 Go 1.25.x/1.26.x。
+仍需 cgo 和原生 C 工具链。桌面使用 Wails v2，macOS 使用系统 WebKit，
 Windows 需要现代 Microsoft Edge WebView2 Evergreen Runtime（拖放需要较新版本）。
 这不是新增外部 FFmpeg 依赖。
 macOS 默认发布目录为 `dist/hdma2truehd-darwin-<arch>/`，双击其中的
@@ -69,7 +104,8 @@ Windows 原生 UI 与拖放尚需实机验证。
 矢量源为 `cmd/hdma2truehd-ui/frontend/icon.svg`；PNG、ICO 和 ICNS 已提交，
 正常构建无需图像工具。修改矢量图后，可在 macOS 执行
 `swift scripts/generate-icons.swift` 重新生成资源，再重建 UI。
-Windows 打包用 UCRT64 binutils 的 `windres` 嵌入 EXE 图标；macOS 打包自动复制 ICNS。
+Windows 打包用 UCRT64 binutils 或 CLANGARM64 LLVM 的 `windres` 嵌入 EXE 图标和版本；
+macOS 打包自动复制 ICNS。
 
 CLI 也可显式选择 MKV 音轨（索引使用容器全局索引，不是音频列表中的序号）：
 
@@ -139,7 +175,7 @@ E-AC-3 分支见 [`internal/audio/eac3.go`](internal/audio/eac3.go) 和
 
 ### 构建
 
-需要 **Go 1.24+、cgo 和原生 C 工具链**，以及 make、curl、tar、xz、patch 和
+发布使用 **Go 1.26.x、cgo 和原生 C 工具链**，以及 make、curl、tar、xz、patch 和
 SHA-256 校验工具。FFmpeg 构建脚本只生成静态库，不编译命令行程序。
 构建环境需要这些工具，最终用户运行单个程序时不需要。
 
@@ -181,7 +217,7 @@ SHA-256 校验工具。FFmpeg 构建脚本只生成静态库，不编译命令�
 
 日常模式不下载、不重建 FFmpeg，不执行测试、`doctor` 或发布打包；
 无需 FFmpeg 原始源码归档及 make、curl、tar、xz、patch，但仍需 Go、原生 C 工具链，
-以及 macOS 的 `otool` 或 Windows UCRT64 的 `objdump`。
+以及 macOS 的 `otool` 或 Windows 对应 MSYS2 环境的 `objdump` 和 `windres`。
 该模式也使用 `go build -a`，避免替换静态库后误用缓存；已有应用会被重新编译覆盖。
 macOS 同时生成带图标的 `.app`；单目标日常构建不会删除另一个已有工具。
 它只用于本地开发，**不能代替附带 LGPL 材料的完整发布目录**。
@@ -191,6 +227,7 @@ macOS 同时生成带图标的 `.app`；单目标日常构建不会删除另一�
 安装 Xcode Command Line Tools 并准备其他构建工具后：
 
 ```sh
+export GOTOOLCHAIN=go1.26.10
 bash scripts/build-macos.sh
 
 # 已有本机静态库时复用，并选择新的发布目录
@@ -223,16 +260,25 @@ bash scripts/build-macos.sh --binary-only --output-dir bin/dev
 .\scripts\build-windows.ps1 -InstallDependencies
 ```
 
-`-InstallDependencies` 在所选 MSYS2 的 UCRT64 环境中执行
+在 x64 主机安装原生 amd64 Go 并使用 UCRT64 GCC；在 ARM64 主机安装原生 arm64 Go，
+使用 CLANGARM64 Clang。脚本根据 Go 架构选择环境，并拒绝主机/编译器架构不匹配。
+
+`-InstallDependencies` 在所选 MSYS2 的 UCRT64 或 CLANGARM64 环境中执行
 `pacman -S --needed`，安装缺失的构建包；由 pacman 提示确认，失败则立即停止，
 成功后重新检查工具并继续构建。它不安装 Go/MSYS2、不执行系统升级，
 也不会自动修改执行策略。后续构建无需再次指定该参数。
-搭配 `-BinaryOnly` 时仅安装 GCC 和 binutils，不安装完整发布所需的其他工具。
+搭配 `-BinaryOnly` 时仅安装对应架构的编译器、链接器和资源工具，不安装完整发布所需的其他工具。
 
 也可以在 **UCRT64** 终端手动安装同样的完整依赖：
 
 ```sh
 pacman -S --needed make diffutils patch curl tar xz mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-binutils
+```
+
+ARM64 则在 **CLANGARM64** 终端安装：
+
+```sh
+pacman -S --needed make diffutils patch curl tar xz mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-llvm-tools mingw-w64-clang-aarch64-lld mingw-w64-clang-aarch64-compiler-rt
 ```
 
 然后在项目目录下的 **PowerShell** 中运行：
@@ -269,13 +315,13 @@ pacman -S --needed make diffutils patch curl tar xz mingw-w64-ucrt-x86_64-gcc mi
 ```
 
 默认 MSYS2 路径为 `C:\msys64`，也可以通过 `MSYS2_ROOT` 环境变量指定。
-PowerShell 入口会自动启动 MSYS2 UCRT64 登录 shell，并继承系统 PATH。
+PowerShell 入口会自动启动匹配架构的 MSYS2 UCRT64 / CLANGARM64 登录 shell，并继承系统 PATH。
 默认只检查依赖，仅显式指定 `-InstallDependencies` 时安装 MSYS2 构建包；
 不会改变执行策略或永久修改环境变量。
-Go 必须在 Windows PATH 中；当前 Windows 构建入口要求 amd64 Go 和 UCRT64 GCC。
+对应架构的原生 Go 必须在 Windows PATH 中。
 FFmpeg 与 Go/cgo 必须使用匹配的目标架构和工具链；
 不能用 `CGO_ENABLED=0` 或只设置 `GOOS=windows` 的纯 Go 交叉编译代替原生构建。
-Windows 链接配置使用静态 GCC 运行库；仍需通过 Windows 原生 CI/运行验证
+Windows 链接配置使用静态编译器运行库；仍需通过 Windows 原生 CI/运行验证
 确认实际系统 DLL 依赖及兼容性。
 
 两个平台完整发布默认输出 `dist/hdma2truehd-<os>-<arch>/`，
@@ -422,7 +468,7 @@ Bash 为 `hdma2truehd`（Windows 下为 `.exe`），PowerShell 为 `hdma2truehd.
 始终保留相应格式的完整校验，不覆盖已有输出；任何转换失败均返回非零退出码。
 可从任意工作目录运行脚本；`--binary` / `-Binary` 的相对路径以当前工作目录为准。
 PowerShell 脚本直接传递主程序退出码；测试本身不需要 MSYS2、Go 或外部 FFmpeg。
-Windows 也可在 MSYS2 UCRT64 Bash 中运行 Bash 测试脚本。
+Windows 也可在对应架构的 MSYS2 UCRT64 / CLANGARM64 Bash 中运行 Bash 测试脚本。
 
 #### 自动化测试
 
@@ -527,6 +573,40 @@ as `DTS-HD MA`; that label does not prove that object metadata is absent.
 > compatibility have not been verified locally. This is not a Dolby-certified
 > encoder and does not guarantee Blu-ray compliance.
 
+### v1.0.0, system requirements and releases
+
+CLI `hdma2truehd version`, help output and the UI footer display **v1.0.0** and
+`Copyright (c) 2026 ninghaofeng`. Version, copyright and OS requirements are
+shared through [`internal/buildinfo/info.go`](internal/buildinfo/info.go).
+Build tooling generates macOS bundle metadata and Windows CLI/UI file versions;
+OS fields requiring numeric versions use `1.0.0`.
+
+| Release platform | Architecture suffix | Minimum supported system |
+|---|---|---|
+| macOS Apple Silicon | `darwin-arm64` | macOS 12.0 |
+| macOS Intel | `darwin-amd64` | macOS 12.0 |
+| Windows x64 | `windows-amd64` | Windows 10 22H2, build 19045 |
+| Windows ARM64 | `windows-arm64` | Windows 11 24H2, build 26100 |
+
+Release CI uses **Go 1.26.x** and native builds on all four targets, not pure-Go
+cross-compilation in place of cgo. macOS FFmpeg, cgo and relinked executables
+target 12.0; the actual Mach-O minimum is checked, rejecting old libraries
+that raise it. [Go 1.26 is the last release supporting macOS 12](https://go.dev/doc/go1.26#darwin);
+deployment flags cannot restore OS support removed in Go 1.27.
+These are release support baselines, not a claim of completed minimum-OS
+on-device acceptance. Windows build numbers are support policy, not startup
+guards. Windows UI also needs the matching-architecture Microsoft Edge WebView2
+Evergreen Runtime.
+
+GitHub Actions builds, tests and uploads four complete archives on regular
+pushes and PRs. Pushing a `v1.0.0` tag matching the source version creates a
+**draft Release** only after all four targets succeed; a maintainer makes it
+public after acceptance. Mismatching tags fail. macOS uses `.tar.gz` to retain
+executable permissions; Windows uses `.zip`. Names follow
+`hdma2truehd-v1.0.0-<os>-<arch>`, with individual `.sha256` sidecars and aggregate
+`SHA256SUMS`. Archives include CLI, UI, FFmpeg sources, notices and both relinking
+kits. The workflow currently does not sign code or notarize macOS applications.
+
 ### Desktop UI (macOS / Windows)
 
 - Batch-select or drop `.dts`, `.dtshd` and `.mkv` files. Files are read locally;
@@ -553,7 +633,9 @@ The platform build entry points below now build CLI and UI into one release by
 default. With an existing native **v3** FFmpeg backend, package them directly:
 
 ```bash
-# macOS terminal / Windows MSYS2 UCRT64 terminal
+# macOS terminal / Windows MSYS2 UCRT64 or CLANGARM64 terminal
+# Select a compatible release toolchain
+export GOTOOLCHAIN=go1.26.10
 bash scripts/build-release.sh
 # Optionally choose a new, nonexistent release directory
 bash scripts/build-release.sh /absolute/path/to/new-release
@@ -562,7 +644,8 @@ bash scripts/build-release.sh --target ui
 ```
 
 No Node.js, npm or global Wails CLI is needed: HTML/CSS/JavaScript are embedded.
-Go 1.24+, cgo and a native C toolchain are still required. Wails v2 uses system
+The module minimum is Go 1.24; releases use Go 1.26.x, and macOS builds accept
+only Go 1.25.x/1.26.x. cgo and a native C toolchain are required. Wails v2 uses system
 WebKit on macOS and requires a modern Microsoft Edge WebView2 Evergreen Runtime
 on Windows (recent versions are needed for file drop). No external FFmpeg
 dependency is introduced.
@@ -578,8 +661,8 @@ An original waveform-and-conversion-arrows design is shared by the application,
 interface and favicon. Its vector source is `cmd/hdma2truehd-ui/frontend/icon.svg`;
 PNG, ICO and ICNS assets are committed, so normal builds need no image tools.
 After editing the SVG, run `swift scripts/generate-icons.swift` on macOS and
-rebuild the UI. Windows packaging embeds the EXE icon with UCRT64 binutils'
-`windres`; macOS packaging copies the ICNS into the app bundle.
+rebuild the UI. Windows packaging embeds EXE icons and versions using UCRT64
+binutils' or CLANGARM64 LLVM's `windres`; macOS copies the ICNS into the app bundle.
 
 The CLI can also select MKV audio explicitly, using global container stream
 indices rather than audio-list positions:
@@ -668,7 +751,7 @@ libraries in-process without invoking its executables or scripts.
 
 ### Building
 
-Requires **Go 1.24+, cgo and a native C toolchain**, plus make, curl, tar, xz,
+Releases use **Go 1.26.x, cgo and a native C toolchain**, plus make, curl, tar, xz,
 patch and a SHA-256 utility. The FFmpeg build script produces static libraries,
 not command-line programs. These tools are build prerequisites, not requirements
 for end users running the single executable.
@@ -725,7 +808,8 @@ libraries or executables:
 Executable-only mode does not download/rebuild FFmpeg, run tests or `doctor`,
 or package a release. It does not require the original FFmpeg source archive,
 make, curl, tar, xz or patch, but still needs Go, a native C toolchain and
-macOS `otool` or Windows UCRT64 `objdump`. It also uses `go build -a` and replaces
+macOS `otool` or the matching Windows MSYS2 environment's `objdump` and `windres`.
+It also uses `go build -a` and replaces
 the existing applications. macOS also gets an app bundle with its icon.
 Single-target local builds leave the other existing application untouched.
 It is for local development and **does not replace a
@@ -736,6 +820,7 @@ complete release with LGPL materials**.
 Install Xcode Command Line Tools and the other build prerequisites, then run:
 
 ```sh
+export GOTOOLCHAIN=go1.26.10
 bash scripts/build-macos.sh
 
 # Reuse native static libraries and choose a new release directory
@@ -769,12 +854,16 @@ can install and check MSYS2 dependencies:
 .\scripts\build-windows.ps1 -InstallDependencies
 ```
 
-`-InstallDependencies` runs `pacman -S --needed` in the selected MSYS2 UCRT64
+Use native amd64 Go with UCRT64 GCC on x64 hosts, or native arm64 Go with
+CLANGARM64 Clang on ARM64 hosts. The script chooses the environment from Go's
+architecture and rejects mismatched host/compiler architectures.
+
+`-InstallDependencies` runs `pacman -S --needed` in the selected MSYS2 UCRT64 or CLANGARM64
 environment to install missing build packages. Pacman asks for confirmation;
 installation failure stops the build. After installation, the script rechecks
 tools and continues. It does not install Go/MSYS2, upgrade the system or change
 the execution policy. The switch is not needed for subsequent builds.
-Combined with `-BinaryOnly`, it installs only GCC and binutils, not the additional
+Combined with `-BinaryOnly`, it installs only the matching compiler, linker and resource tools, not the additional
 full-release tools.
 
 Alternatively, install the same full prerequisites manually in a **UCRT64**
@@ -782,6 +871,12 @@ terminal:
 
 ```sh
 pacman -S --needed make diffutils patch curl tar xz mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-binutils
+```
+
+For ARM64, install from a **CLANGARM64** terminal instead:
+
+```sh
+pacman -S --needed make diffutils patch curl tar xz mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-llvm-tools mingw-w64-clang-aarch64-lld mingw-w64-clang-aarch64-compiler-rt
 ```
 
 Then run from the project directory in **PowerShell**:
@@ -818,15 +913,15 @@ Then run from the project directory in **PowerShell**:
 ```
 
 The default MSYS2 path is `C:\msys64`; it can also be set with `MSYS2_ROOT`.
-The PowerShell entry point starts an MSYS2 UCRT64 login shell and inherits the
+The PowerShell entry point starts the matching MSYS2 UCRT64 / CLANGARM64 login shell and inherits the
 system PATH. By default it only checks dependencies; MSYS2 packages are installed
 only when `-InstallDependencies` is explicitly supplied. It does not change the
 execution policy or permanently modify environment variables.
 
-Go must be on the Windows PATH. The current Windows build requires amd64 Go and
-UCRT64 GCC. FFmpeg and Go/cgo must use matching target architectures and
+Native Go for the selected architecture must be on the Windows PATH.
+FFmpeg and Go/cgo must use matching target architectures and
 toolchains. `CGO_ENABLED=0` or a pure-Go cross build with only `GOOS=windows`
-cannot replace a native build. Windows linking uses the static GCC runtime;
+cannot replace a native build. Windows linking uses static compiler runtimes;
 actual system DLL dependencies and compatibility still need native Windows
 CI/runtime validation.
 
@@ -1009,7 +1104,7 @@ Scripts may be launched from any working directory; relative `--binary` /
 `-Binary` paths are resolved from the caller's working directory. PowerShell
 passes through the executable's exit code. Testing itself requires neither
 MSYS2, Go nor an external FFmpeg. The Bash test script can also run in MSYS2
-UCRT64 Bash on Windows.
+UCRT64 / CLANGARM64 Bash on Windows, matching the native architecture.
 
 #### Automated tests
 

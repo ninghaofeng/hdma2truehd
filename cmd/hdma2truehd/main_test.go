@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ninghaofeng/hdma2truehd/internal/audio"
+	"github.com/ninghaofeng/hdma2truehd/internal/buildinfo"
 )
 
 func TestPlanJobs(t *testing.T) {
@@ -102,6 +103,20 @@ func TestRunArguments(t *testing.T) {
 			t.Fatalf("%v: want %d got %d\n%s\n%s", tt.args, tt.code, code, &out, &errOut)
 		}
 
+	}
+}
+
+func TestVersionAndCopyright(t *testing.T) {
+	for _, args := range [][]string{{"version"}, {"--help"}} {
+		var out, diagnostics bytes.Buffer
+		if code := run(t.Context(), args, &out, &diagnostics); code != 0 {
+			t.Fatalf("%v: exit %d: %s", args, code, diagnostics.String())
+		}
+		for _, want := range []string{buildinfo.Version, buildinfo.Copyright} {
+			if !strings.Contains(out.String(), want) {
+				t.Fatalf("%v: missing %q: %s", args, want, out.String())
+			}
+		}
 	}
 }
 

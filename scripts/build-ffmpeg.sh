@@ -2,6 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+source "$root/scripts/build-env.sh"
 build="${1:-$root/.backend}"
 mkdir -p "$build"
 build="$(cd "$build" && pwd)"
@@ -39,8 +40,14 @@ cd "$source_dir"
 patch --batch --forward -p1 < "$root/patches/ffmpeg/0001-truehd-7.1-and-short-streams.patch"
 patch --batch --forward -p1 < "$root/patches/ffmpeg/0002-eac3-dependent-7.1.patch"
 extra_ldflags=""
-if [[ "${MSYSTEM:-}" == "UCRT64" ]]; then
+extra_cflags=""
+compiler="${CC:-gcc}"
+if [[ "${MSYSTEM:-}" == CLANGARM64 ]]; then compiler="${CC:-clang}"; fi
+if [[ "${MSYSTEM:-}" == UCRT64 || "${MSYSTEM:-}" == CLANGARM64 ]]; then
     extra_ldflags="-static"
+elif [[ "$(uname -s)" == Darwin ]]; then
+    extra_cflags="-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
+    extra_ldflags="$extra_cflags"
 fi
 # Build only in-process codec/container support. Disabling autodetection,
 # network, shared libraries and programs keeps system packages from silently
@@ -48,6 +55,7 @@ fi
 # The version marker is checked by the Go bridge to reject a stock backend.
 # FFmpeg's ac3 parser also handles E-AC-3; it does not require an AC-3 encoder.
 ./configure \
+    --cc="$compiler" \
     --disable-everything --disable-autodetect --disable-doc --disable-network \
     --disable-debug --disable-x86asm \
     --disable-programs --disable-shared --enable-static --enable-pic \
@@ -60,6 +68,7 @@ fi
     --enable-demuxer=dts,dtshd,truehd,eac3,matroska,wav,pcm_s16le,pcm_s24le,pcm_s32le \
     --enable-muxer=truehd,eac3,wav,pcm_s16le,pcm_s24le,pcm_s32le \
     --extra-ldflags="$extra_ldflags" \
+    --extra-cflags="$extra_cflags" \
     --extra-version=hdma2truehd-71-v3
 make -j"${JOBS:-2}"
 printf '\nStatic libraries built in %s\nRun go test ./... and bash scripts/build-release.sh.\n' "$source_dir"

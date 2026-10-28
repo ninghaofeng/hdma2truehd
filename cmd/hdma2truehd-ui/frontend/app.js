@@ -223,6 +223,12 @@ $("cancel").addEventListener("click", async () => {
 applyLanguage();
 if (window.go?.main?.App && window.runtime) {
   backend = window.go.main.App;
+  backend.BuildInfo().then((info) => {
+    $("app-version").textContent = `HDMA Converter ${info.version} · ${info.architecture}`;
+    $("app-version").title = info.minimumSystem;
+    $("app-copyright").textContent = info.copyright;
+    document.title = `HDMA Converter ${info.version}`;
+  }).catch(showError);
   // Subscribe before fetching State so a queue change cannot fall into a
   // setup gap. Revision checks reconcile an event that overtakes the RPC.
   window.runtime.EventsOn("queue", acceptState);

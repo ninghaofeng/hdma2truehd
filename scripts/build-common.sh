@@ -5,6 +5,7 @@ set -euo pipefail
 # resolved from the repository, not from the caller's working directory.
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$root"
+source "$root/scripts/build-env.sh"
 platform="${1:?Pass macos or windows}"
 shift
 reuse=false
@@ -88,7 +89,7 @@ fi
 case "$platform" in
     macos)
         if [[ "$install_deps" == true ]]; then
-            printf '%s\n' '--install-deps is only supported for Windows MSYS2 UCRT64 builds.' >&2
+            printf '%s\n' '--install-deps is only supported for Windows MSYS2 builds.' >&2
             exit 2
         fi
         if [[ "$(uname -s)" != Darwin ]]; then
@@ -99,12 +100,16 @@ case "$platform" in
         export CC="${CC:-clang}"
         ;;
     windows)
-        if [[ "${OS:-}" != Windows_NT || "${MSYSTEM:-}" != UCRT64 ]]; then
-            printf 'The Windows build requires MSYS2 UCRT64. Use scripts/build-windows.ps1.\n' >&2
+        if [[ "${OS:-}" != Windows_NT || ( "${MSYSTEM:-}" != UCRT64 && "${MSYSTEM:-}" != CLANGARM64 ) ]]; then
+            printf 'Windows requires MSYS2 UCRT64 (x64) or CLANGARM64 (ARM64). Use scripts/build-windows.ps1.\n' >&2
             exit 1
         fi
         target=windows
-        export CC="${CC:-gcc}"
+        if [[ "$MSYSTEM" == CLANGARM64 ]]; then
+            export CC="${CC:-clang}"
+        else
+            export CC="${CC:-gcc}"
+        fi
         ;;
     *)
         printf 'Unsupported build platform: %s\n' "$platform" >&2
@@ -119,6 +124,9 @@ if [[ "$install_deps" == true ]]; then
         exit 1
     fi
     packages=(mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-binutils)
+    if [[ "$MSYSTEM" == CLANGARM64 ]]; then
+        packages=(mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-llvm-tools mingw-w64-clang-aarch64-lld mingw-w64-clang-aarch64-compiler-rt)
+    fi
     if [[ "$binary_only" == false ]]; then
         packages=(make diffutils patch curl tar xz "${packages[@]}")
     fi
@@ -133,7 +141,7 @@ if [[ "$platform" == macos ]]; then
     tools+=(otool)
 else
     tools+=(objdump)
-    if [[ "$build_target" != cli ]]; then tools+=(windres); fi
+    tools+=(windres)
 fi
 for tool in "${tools[@]}"; do
     if ! command -v "$tool" >/dev/null 2>&1; then
@@ -144,6 +152,7 @@ for tool in "${tools[@]}"; do
         exit 1
     fi
 done
+check_release_toolchain
 export CGO_ENABLED=1
 # Go and the C toolchain must target the same native platform/architecture.
 # A pure-Go cross build cannot substitute for matching FFmpeg static archives.
@@ -151,9 +160,13 @@ if [[ "$(go env GOOS)" != "$target" || "$(go env GOARCH)" != "$(go env GOHOSTARC
     printf 'A native build is required; unset cross-compilation GOOS/GOARCH overrides.\n' >&2
     exit 1
 fi
-if [[ "$platform" == windows && "$(go env GOARCH)" != amd64 ]]; then
-    printf 'The UCRT64 Windows build currently requires amd64 Go and GCC.\n' >&2
-    exit 1
+if [[ "$platform" == windows ]]; then
+    machine="$("$CC" -dumpmachine)"
+    case "$MSYSTEM:$(go env GOARCH):$machine" in
+        UCRT64:amd64:x86_64-*) ;;
+        CLANGARM64:arm64:aarch64-*) ;;
+        *) printf 'Go architecture, MSYS2 environment and C compiler disagree: %s / %s / %s.\n' "$(go env GOARCH)" "$MSYSTEM" "$machine" >&2; exit 1 ;;
+    esac
 fi
 suffix=""
 if [[ "$platform" == windows ]]; then
@@ -167,6 +180,9 @@ check_static_dependencies() {
     if [[ "$platform" == macos ]]; then
         imports="$(otool -L "$1")"
         printf '%s\n' "$imports"
+        # Inspect the linked result too: cached FFmpeg objects may have been
+        # built for a newer OS even when this invocation targets macOS 12.
+        check_macos_deployment_target "$1"
         if ! printf '%s\n' "$imports" | awk 'NR > 1 && $1 !~ /^\/usr\/lib\// && $1 !~ /^\/System\/Library\// { bad = 1 } END { exit bad }'; then
             printf 'Unexpected non-system dynamic library dependency: %s\n' "$1" >&2
             return 1
@@ -174,7 +190,7 @@ check_static_dependencies() {
     else
         imports="$(objdump -p "$1")"
         printf '%s\n' "$imports" | grep 'DLL Name'
-        if printf '%s\n' "$imports" | grep 'DLL Name' | grep -Ei 'avcodec|avformat|avutil|swresample|libgcc|libwinpthread|libstdc'; then
+        if printf '%s\n' "$imports" | grep 'DLL Name' | grep -Ei 'avcodec|avformat|avutil|swresample|libgcc|libwinpthread|libstdc|libc\+\+|libunwind|libclang_rt'; then
             printf 'Unexpected non-system DLL dependency: %s\n' "$1" >&2
             return 1
         fi

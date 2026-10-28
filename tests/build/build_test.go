@@ -26,7 +26,7 @@ func fixture(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"build-common.sh", "build-release.sh", "build-ui.sh", "build-ffmpeg.sh"} {
+	for _, name := range []string{"build-common.sh", "build-release.sh", "build-ui.sh", "build-ffmpeg.sh", "build-env.sh"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "scripts", name))
 		if err != nil {
 			t.Fatal(err)
@@ -39,6 +39,7 @@ func fixture(t *testing.T) string {
 		"patches/ffmpeg/0002-eac3-dependent-7.1.patch",
 		"docs/RELINKING.md", "go.mod", "go.sum", "goroot/LICENSE", "goroot/PATENTS",
 		".backend/ffmpeg-8.0.1.tar.xz", "cmd/hdma2truehd-ui/Info.plist",
+		"cmd/hdma2truehd/main.go",
 		"cmd/hdma2truehd-ui/assets/app.icns", "cmd/hdma2truehd-ui/app.rc",
 	} {
 		write(name, "fixture")
@@ -54,7 +55,8 @@ case "$1" in
         case "$2" in
             CGO_ENABLED) echo 1 ;;
             GOOS) echo "${TEST_GOOS:-darwin}" ;;
-            GOARCH|GOHOSTARCH) echo amd64 ;;
+            GOARCH|GOHOSTARCH) echo "${TEST_GOARCH:-amd64}" ;;
+            GOVERSION) echo "${TEST_GOVERSION:-go1.26.8}" ;;
             GOROOT) echo "$FIXTURE_ROOT/goroot" ;;
         esac
         ;;
@@ -78,14 +80,22 @@ case "$1" in
                 "$(basename "$output")" "$HDMA_RELINK_NAME" "$HDMA_EXE_SUFFIX" > "$HDMA_RELINK_DIR/relink.sh"
         fi
         ;;
+    run)
+        if [[ "$*" == *--version* ]]; then echo v1.0.0; exit 0; fi
+        while [[ "$1" != --output-dir ]]; do shift; done
+        mkdir -p "$2"
+        for name in Info.plist cli.rc ui-version.rc VERSION.txt; do
+            printf 'fixture' > "$2/$name"
+        done
+        ;;
     version) echo "fixture Go" ;;
     test|vet|list) ;;
     *) exit 99 ;;
 esac
 `)
-	write("tools/cc", "#!/usr/bin/env bash\necho 'fixture compiler'\n")
+	write("tools/cc", "#!/usr/bin/env bash\nif [[ \"$1\" == -dumpmachine ]]; then\nif [[ \"$TEST_GOARCH\" == arm64 ]]; then echo aarch64-w64-windows-gnu; else echo x86_64-w64-mingw32; fi\nelse echo 'fixture compiler'; fi\n")
 	write("tools/uname", "#!/usr/bin/env bash\necho Darwin\n")
-	write("tools/otool", "#!/usr/bin/env bash\nprintf '%s:\\n\\t/usr/lib/libSystem.B.dylib\\n' \"$2\"\n")
+	write("tools/otool", "#!/usr/bin/env bash\nif [[ \"$1\" == -l ]]; then printf 'cmd LC_BUILD_VERSION\\nminos %s\\n' \"${TEST_MINOS:-12.0}\"; else printf '%s:\\n\\t/usr/lib/libSystem.B.dylib\\n' \"$2\"; fi\n")
 	write("tools/objdump", "#!/usr/bin/env bash\nprintf '\\tDLL Name: KERNEL32.dll\\n'\n")
 	write("tools/cygpath", "#!/usr/bin/env bash\nprintf '%s\\n' \"$2\"\n")
 	write("tools/windres", `#!/usr/bin/env bash
@@ -100,6 +110,9 @@ exit "${TEST_WINDRES_EXIT:-0}"
 	t.Setenv("CC", "cc")
 	t.Setenv("HDMA_UI", "")
 	t.Setenv("TEST_GOOS", "darwin")
+	t.Setenv("TEST_GOARCH", "amd64")
+	t.Setenv("TEST_GOVERSION", "go1.26.8")
+	t.Setenv("TEST_MINOS", "12.0")
 	t.Setenv("TEST_WINDRES_EXIT", "0")
 	t.Setenv("TEST_BUILD_FAIL", "")
 	return root
@@ -410,6 +423,90 @@ func TestCleanBackendMissingOrFailed(t *testing.T) {
 			exists(t, root, ".backend/ffmpeg-8.0.1", !fail)
 			exists(t, root, "dist/hdma2truehd-darwin-amd64/hdma2truehd", true)
 			exists(t, root, ".backend/ffmpeg-8.0.1.tar.xz", true)
+		})
+	}
+}
+
+func TestWindowsARM64Build(t *testing.T) {
+	root := fixture(t)
+	t.Setenv("OS", "Windows_NT")
+	t.Setenv("MSYSTEM", "CLANGARM64")
+	t.Setenv("TEST_GOOS", "windows")
+	t.Setenv("TEST_GOARCH", "arm64")
+	run(t, root, "build-common.sh", true, "windows", "--binary-only")
+	for _, app := range []string{"hdma2truehd", "hdma2truehd-ui"} {
+		exists(t, root, "bin/"+app+".exe", true)
+		exists(t, root, "cmd/"+app+"/resource_windows_arm64.syso", false)
+	}
+	t.Setenv("MSYSTEM", "UCRT64")
+	output := run(t, root, "build-common.sh", false, "windows", "--binary-only")
+	if !strings.Contains(output, "disagree") {
+		t.Fatal(output)
+	}
+}
+
+func TestMacOSDeploymentContract(t *testing.T) {
+	t.Run("unsupported Go runtime", func(t *testing.T) {
+		root := fixture(t)
+		t.Setenv("TEST_GOVERSION", "go1.27.2")
+		output := run(t, root, "build-common.sh", false, "macos", "--binary-only")
+		if !strings.Contains(output, "macOS 12 builds require") {
+			t.Fatal(output)
+		}
+		exists(t, root, "bin", false)
+	})
+	t.Run("cached backend raises minimum", func(t *testing.T) {
+		root := fixture(t)
+		t.Setenv("TEST_MINOS", "26.0")
+		output := run(t, root, "build-common.sh", false, "macos", "--binary-only")
+		if !strings.Contains(output, "rebuild FFmpeg with --clean-backend") {
+			t.Fatal(output)
+		}
+	})
+	t.Run("direct packaging rejects incompatible backend", func(t *testing.T) {
+		root := fixture(t)
+		t.Setenv("TEST_MINOS", "26.0")
+		output := run(t, root, "build-release.sh", false, "--binary-only")
+		if !strings.Contains(output, "rebuild FFmpeg with --clean-backend") {
+			t.Fatal(output)
+		}
+		exists(t, root, "bin/HDMA Converter.app", false)
+	})
+}
+
+func TestFFmpegCompilerSelection(t *testing.T) {
+	for _, compiler := range []string{"selected-clang", ""} {
+		t.Run(compiler, func(t *testing.T) {
+			root := fixture(t)
+			t.Setenv("MSYSTEM", "CLANGARM64")
+			t.Setenv("CC", compiler)
+			backend := filepath.Join(root, ".backend")
+			if err := os.Rename(filepath.Join(backend, "ffmpeg-8.0.1"),
+				filepath.Join(backend, "ffmpeg-backup")); err != nil {
+				t.Fatal(err)
+			}
+			for name, script := range map[string]string{
+				"sha256sum": "#!/usr/bin/env bash\necho '05ee0b03119b45c0bdb4df654b96802e909e0a752f72e4fe3794f487229e5a41  fixture'\n",
+				"tar":       "#!/usr/bin/env bash\nset -e\nmkdir -p \"$FIXTURE_ROOT/.backend/ffmpeg-8.0.1\"\ncp \"$FIXTURE_ROOT/configure-stub\" \"$FIXTURE_ROOT/.backend/ffmpeg-8.0.1/configure\"\n",
+				"patch":     "#!/usr/bin/env bash\nexit 0\n",
+				"make":      "#!/usr/bin/env bash\nexit 0\n",
+			} {
+				if err := os.WriteFile(filepath.Join(root, "tools", name), []byte(script), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			configure := "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$FIXTURE_ROOT/configure.log\"\n"
+			if err := os.WriteFile(filepath.Join(root, "configure-stub"), []byte(configure), 0755); err != nil {
+				t.Fatal(err)
+			}
+			run(t, root, "build-ffmpeg.sh", true, filepath.ToSlash(backend))
+			if compiler == "" {
+				compiler = "clang"
+			}
+			data, err := os.ReadFile(filepath.Join(root, "configure.log"))
+			if err != nil || !strings.Contains(string(data), "--cc="+compiler+"\n") {
+				t.Fatalf("compiler not forwarded: %s (%v)", data, err)
+			}
 		})
 	}
 }

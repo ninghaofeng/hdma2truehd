@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ninghaofeng/hdma2truehd/internal/audio"
+	"github.com/ninghaofeng/hdma2truehd/internal/buildinfo"
 	"github.com/ninghaofeng/hdma2truehd/internal/gui"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -59,6 +60,7 @@ func (a *App) ChooseOutput() (string, error) {
 func (a *App) Start(request gui.Request) (gui.State, error) { return a.service.Start(a.ctx, request) }
 func (a *App) State() gui.State                             { return a.service.State() }
 func (a *App) Cancel()                                      { a.service.Cancel() }
+func (a *App) BuildInfo() buildinfo.Info                    { return buildinfo.Current() }
 
 func main() {
 	assets, err := fs.Sub(frontend, "frontend")
@@ -72,7 +74,7 @@ func main() {
 		}
 	})
 	err = wails.Run(&options.App{
-		Title: "HDMA Converter", Width: 1140, Height: 830, MinWidth: 860, MinHeight: 650,
+		Title: "HDMA Converter " + buildinfo.Version, Width: 1140, Height: 830, MinWidth: 860, MinHeight: 650,
 		BackgroundColour: options.NewRGB(245, 247, 251),
 		AssetServer:      &assetserver.Options{Assets: assets},
 		DragAndDrop:      &options.DragAndDrop{EnableFileDrop: true, DisableWebViewDrop: true},
