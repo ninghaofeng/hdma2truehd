@@ -1,0 +1,5 @@
+/.backend/
+/bin/
+/dist/
+*.test
+*.exe
