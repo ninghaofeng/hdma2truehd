@@ -63,8 +63,9 @@ func (b Backend) Probe(ctx context.Context, path string) (Info, error) {
 }
 
 func (i Info) ValidateSource() error {
-	if i.Stream.Codec != "dts" || i.Stream.Profile != "DTS-HD MA" {
-		return fmt.Errorf("%s: expected confirmed DTS-HD MA, got codec=%q profile=%q; DTS core/HRA are not lossless MA", i.Path, i.Stream.Codec, i.Stream.Profile)
+	if i.Stream.Codec != "dts" || (i.Stream.Profile != "DTS-HD MA" &&
+		i.Stream.Profile != "DTS-HD MA + DTS:X" && i.Stream.Profile != "DTS-HD MA + DTS:X IMAX") {
+		return fmt.Errorf("%s: expected confirmed DTS-HD MA (including DTS:X/IMAX compatible channels), got codec=%q profile=%q; DTS core/HRA are not lossless MA", i.Path, i.Stream.Codec, i.Stream.Profile)
 	}
 	return i.validateFormat()
 }

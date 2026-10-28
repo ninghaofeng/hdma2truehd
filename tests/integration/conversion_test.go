@@ -43,7 +43,13 @@ func TestDTSHDMAConversion(t *testing.T) {
 	for _, fixture := range []struct {
 		env      string
 		channels int
-	}{{"HDMA_TEST_DTS_51", 6}, {"HDMA_TEST_DTS_71", 8}} {
+		dtsx     bool
+	}{
+		{"HDMA_TEST_DTS_51", 6, false},
+		{"HDMA_TEST_DTS_71", 8, false},
+		{"HDMA_TEST_DTSX_51", 6, true},
+		{"HDMA_TEST_DTSX_71", 8, true},
+	} {
 		t.Run(fixture.env, func(t *testing.T) {
 			path := os.Getenv(fixture.env)
 			if path == "" {
@@ -55,6 +61,10 @@ func TestDTSHDMAConversion(t *testing.T) {
 			}
 			if source.Stream.Channels != fixture.channels {
 				t.Fatalf("fixture needs %d channels, got %d", fixture.channels, source.Stream.Channels)
+			}
+			if fixture.dtsx && source.Stream.Profile != "DTS-HD MA + DTS:X" &&
+				source.Stream.Profile != "DTS-HD MA + DTS:X IMAX" {
+				t.Fatalf("fixture needs a confirmed lossless DTS:X profile, got %q", source.Stream.Profile)
 			}
 			output := filepath.Join(t.TempDir(), "output.thd")
 			result, err := b.Convert(t.Context(), path, output, audio.Options{})

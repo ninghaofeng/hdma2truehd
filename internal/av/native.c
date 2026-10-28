@@ -249,8 +249,13 @@ static int consume_frame(Operation *op, AVFrame *frame)
     if (frame->flags & AV_FRAME_FLAG_CORRUPT || frame->decode_error_flags ||
         frame->sample_rate != op->rate || av_channel_layout_compare(&frame->ch_layout, &op->layout))
         return AVERROR_INVALIDDATA;
-    if (op->decoder->codec_id == AV_CODEC_ID_DTS && op->decoder->profile != AV_PROFILE_DTS_HD_MA)
+    if (op->decoder->codec_id == AV_CODEC_ID_DTS &&
+        op->decoder->profile != AV_PROFILE_DTS_HD_MA &&
+        op->decoder->profile != AV_PROFILE_DTS_HD_MA_X &&
+        op->decoder->profile != AV_PROFILE_DTS_HD_MA_X_IMAX) {
+        op->stage = "validate lossless DTS-HD MA / DTS:X decoder profile";
         return AVERROR_INVALIDDATA;
+    }
     if (!op->swr) {
         op->input_format = frame->format;
         ret = swr_alloc_set_opts2(&op->swr, &op->layout, AV_SAMPLE_FMT_S32, op->rate,

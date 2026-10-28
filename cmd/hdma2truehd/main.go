@@ -34,7 +34,8 @@ Convert options (put flags before input paths):
 
 Patched FFmpeg libraries are statically linked; no ffmpeg/ffprobe is needed.
 Conversion preserves supported sample rates, precision and speaker labels.
-No downmixing, resampling, DTS:X objects, Atmos, or MKV processing.
+DTS:X/IMAX uses compatible 5.1/7.1 channels only, without object rendering or metadata.
+No upmixing, downmixing, resampling, Atmos, or MKV processing.
 `
 
 func main() {
@@ -122,6 +123,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 
 func processJobs(ctx context.Context, jobs []job, options audio.Options,
 	convert func(context.Context, string, string, audio.Options) (audio.Result, error), out, errOut io.Writer) int {
+	fmt.Fprintln(errOut, "NOTE: PCM verification covers decoded compatible channels only; DTS:X objects are not rendered and object metadata is not retained.")
 	succeeded, failed, unverified := 0, 0, 0
 	for i, job := range jobs {
 		if ctx.Err() != nil {

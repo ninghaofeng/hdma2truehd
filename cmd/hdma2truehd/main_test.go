@@ -95,6 +95,9 @@ func TestBatchProcessing(t *testing.T) {
 			var out, errOut bytes.Buffer
 			code := processJobs(ctx, []job{{"a.dts", "a.thd"}, {"b.dts", "b.thd"}},
 				audio.Options{SkipVerify: mode == "skip"}, convert, &out, &errOut)
+			if !strings.Contains(errOut.String(), "DTS:X objects are not rendered and object metadata is not retained") {
+				t.Fatalf("missing compatible-channel conversion notice: %s", &errOut)
+			}
 			expectedCode, expectedCalls := 0, 2
 			switch mode {
 			case "failure":

@@ -1,16 +1,23 @@
 # hdma2truehd
 
-将 **DTS-HD MA 音频转换为 Dolby TrueHD `.thd`** 的实验性 Go 命令行工具，
+将 **DTS-HD MA 音频（含 DTS:X 兼容声道）转换为 Dolby TrueHD `.thd`** 的实验性 Go 命令行工具，
 面向 macOS 和 Windows。通过 **cgo 静态链接 FFmpeg 库**，探测、解码、编码及
 PCM 校验均在进程内完成；运行时不启动 `ffmpeg` / `ffprobe`，也不需要安装它们。
 
 支持 5.1、7.1，默认完整比较逐声道 PCM SHA-256 和精确采样数；
 不自动降混、重采样或降低有效精度。
 
+DTS:X / DTS:X IMAX 仅解码兼容的 5.1 或 7.1 声道，保持原布局；
+不执行上混、对象渲染，也不保留对象元数据或生成 Atmos。
+PCM 一致性校验只覆盖解码后的兼容声道，不表示完整保留 DTS:X 对象场景。
+部分 DTS:X 文件可能仅被探测为 `DTS-HD MA`，该标签不保证不存在对象元数据。
+
 > **验证边界：** macOS 已通过 288 组原生库回环测试、取消/错误传播测试、
 > 无 PATH 的单文件自检以及 LGPL 对象文件重新链接测试。另已通过两份约 30 秒的
 > 真实 DTS-HD MA 样本（48 kHz，5.1(side)/16 bit、7.1/24 bit）端到端转换、
-> 完整 PCM 校验及外部 FFmpeg 解码比较；Windows 原生运行和硬件播放兼容性尚未在本地验证。
+> 完整 PCM 校验及外部 FFmpeg 解码比较。另已用真实 DTS:X 7.1 文件的约 30 秒片段
+> （48 kHz / 24 bit）通过同样的兼容声道转换与校验；
+> DTS:X 5.1、IMAX 真实样本、Windows 原生运行和硬件播放兼容性尚未在本地验证。
 > 这不是 Dolby 认证的编码器，也不保证 Blu-ray 合规。
 
 ## 架构
@@ -181,13 +188,14 @@ hdma2truehd convert --skip-verify -o "output.thd" "input.dts"
 
 | 项目 | 范围 |
 |---|---|
-| 输入 | 本地单音轨音频文件，库探测确认为 `dts` / `DTS-HD MA` |
+| 输入 | 本地单音轨音频文件，库探测确认为 `dts` / `DTS-HD MA`、`DTS-HD MA + DTS:X` 或 `DTS-HD MA + DTS:X IMAX` |
 | 布局 | `5.1(side)`、`5.1`（后环绕）、`7.1`（保留侧环绕和后环绕） |
 | 有效精度 | 16 或 24 位；未知、20 位、32 位输入明确拒绝 |
 | 采样率 | 44.1、48、88.2、96、176.4、192 kHz；不重采样 |
 | 输出 | 原始 TrueHD `.thd`，无 AC-3 伴随流 |
 | 编解码回环 | 三种布局 × 六种采样率 × 两种位深 × 八种长度，共 288 组 |
 | 真实 MA 验收 | macOS 本地两份约 30 秒样本通过：48 kHz，5.1(side)/16 bit、7.1/24 bit；完整 PCM 校验及外部 FFmpeg 解码比较一致 |
+| 真实 DTS:X 验收 | macOS 本地约 30 秒的 48 kHz / 24 bit / 7.1 片段通过；逐声道 PCM 校验及外部 FFmpeg 解码比较一致；尚无 DTS:X 5.1 / IMAX 真实样本验收 |
 
 矩阵描述的是实验性软件编解码能力，不是播放器、功放或 Blu-ray 支持声明。
 特别是 7.1 的 176.4/192 kHz 不应被当作 Blu-ray 兼容输出；Dolby 公布的
@@ -263,8 +271,13 @@ go test ./tests/integration -run TestTrueHDRoundTrip -count=1
 ```sh
 HDMA_TEST_DTS_51="/absolute/path/to/5.1.dts" \
 HDMA_TEST_DTS_71="/absolute/path/to/7.1.dtshd" \
+HDMA_TEST_DTSX_51="/absolute/path/to/dtsx-5.1.dts" \
+HDMA_TEST_DTSX_71="/absolute/path/to/dtsx-7.1.dts" \
 go test ./tests/integration -run TestDTSHDMAConversion -count=1 -v
 ```
+
+四个样本变量分别可选。DTS:X 测试要求探测到上述两个 DTS:X profile 之一，
+并执行完整兼容声道 PCM 校验；没有对应样本时不会以普通 MA 代替验收。
 
 未提供真实样本时对应测试明确 `SKIP`。CI 配置在 macOS/Windows 原生构建静态库、
 测试、生成完整发布材料并实际重新链接；配置存在不代表已经远端运行成功。
