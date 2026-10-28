@@ -4,7 +4,7 @@
 
 ## 简体中文
 
-将 **DTS-HD MA 音频（含 DTS:X 兼容声道）转换为 Dolby TrueHD `.thd` 或 E-AC-3 `.eac3`** 的实验性 Go 命令行工具，
+将 **DTS-HD MA 音频（含 DTS:X 兼容声道）转换为 Dolby TrueHD `.thd` 或 E-AC-3 `.eac3`** 的实验性 Go 命令行及桌面工具，
 面向 macOS 和 Windows。通过 **cgo 静态链接 FFmpeg 库**，探测、解码、编码及
 PCM 校验均在进程内完成；运行时不启动 `ffmpeg` / `ffprobe`，也不需要安装它们。
 
@@ -27,10 +27,62 @@ PCM 一致性校验只覆盖解码后的兼容声道，不表示完整保留 DTS
 > DTS:X 5.1、IMAX 真实样本、Windows 原生运行和硬件播放兼容性尚未在本地验证。
 > 这不是 Dolby 认证的编码器，也不保证 Blu-ray 合规。
 
+### 桌面界面（macOS / Windows）
+
+- 批量选择或拖入 `.dts`、`.dtshd`、`.mkv`，直接读取本地文件，不上传或复制整部 MKV。
+- MKV 展示音轨索引、语言、标题、格式、声道和时长；手动勾选一条或多条音轨。
+  非 DTS-HD MA 音轨也会显示，但不可转换；有损 DTS core / HRA 仍不在支持范围。
+- TrueHD 与 E-AC-3 可同时勾选；桌面端默认勾选两种，CLI 默认仍仅 TrueHD。
+  E-AC-3 的 5.1 / 7.1 码率可分别选择自动或预设值，混合队列按音轨布局使用对应设置；
+  自动为 5.1 **960 kb/s**、7.1 **1536 kb/s**。
+- 可选输出目录，留空时与源文件同目录；MKV 输出使用 `电影名.track-索引.thd/.eac3`
+  避免同一电影的不同音轨互相覆盖。覆盖已有文件需要显式勾选。
+- 串行队列、每项结果、错误提示、取消，以及可记住的中英文切换。
+  进度条按已结束任务计数，不伪造当前编码的时间百分比。关闭窗口会取消并等待清理；
+  已发布的输出保留。技术诊断保留后端原始英文消息。
+- 仅生成独立音频文件，不封装回 MKV、不解码视频或字幕，也不解析 DTS:X 对象。
+
+先按下文构建本机 **v3** FFmpeg 后端，然后执行：
+
+```bash
+# macOS 终端 / Windows MSYS2 UCRT64 终端
+bash scripts/build-ui.sh
+# 可指定尚不存在的发布目录
+bash scripts/build-ui.sh /absolute/path/to/new-ui-release
+```
+
+无需 Node.js、npm 或全局 Wails CLI；HTML/CSS/JavaScript 随 Go 程序嵌入，
+仍需 Go 1.24+、cgo 和原生 C 工具链。桌面使用 Wails v2，macOS 使用系统 WebKit，
+Windows 需要现代 Microsoft Edge WebView2 Evergreen Runtime（拖放需要较新版本）。
+这不是新增外部 FFmpeg 依赖。
+macOS 发布目录为 `dist/hdma2truehd-ui-darwin-<arch>/`，双击其中的
+`HDMA Converter.app`；Windows 为 `dist/hdma2truehd-ui-windows-<arch>/hdma2truehd-ui.exe`。
+发布目录包含 FFmpeg 重新链接材料及实际链接的 Go 模块许可证；发布前自行签名/公证并审查许可。
+Windows 原生 UI 与拖放尚需实机验证。
+
+应用使用原创“声波＋转换箭头”图标，统一用于应用图标、窗口界面和网页图标。
+矢量源为 `cmd/hdma2truehd-ui/frontend/icon.svg`；PNG、ICO 和 ICNS 已提交，
+正常构建无需图像工具。修改矢量图后，可在 macOS 执行
+`swift scripts/generate-icons.swift` 重新生成资源，再重建 UI。
+Windows 打包用 UCRT64 binutils 的 `windres` 嵌入 EXE 图标；macOS 打包自动复制 ICNS。
+
+CLI 也可显式选择 MKV 音轨（索引使用容器全局索引，不是音频列表中的序号）：
+
+```bash
+hdma2truehd probe --list-tracks movie.mkv
+hdma2truehd convert --stream 2 --format both movie.mkv
+```
+
+`--stream` 仅用于单个输入；CLI 默认命名仍为 `movie.thd/.eac3`，
+转换同一 MKV 的不同音轨时请使用不同输出目录或单格式 `-o`。
+未明确选择时，多轨容器会被拒绝，不会自动选取默认音轨。
+
 ### 架构
 
-- Go：CLI、任务编排、路径安全、逐声道哈希和最终输出发布。
-- cgo/C 桥接：使用 `libavformat` 探测与封装、`libavcodec` 解码与 TrueHD 编码。
+- Go：CLI、桌面队列、路径安全、逐声道哈希和最终输出发布。
+- 桌面：Wails 与嵌入式 HTML/CSS/JavaScript；`internal/gui/` 独立于 webview，可无界面测试。
+- cgo/C 桥接：使用 `libavformat` 探测（含 MKV 音轨）与封装、
+  `libavcodec` 解码与 TrueHD / E-AC-3 编码。
 - `libswresample`：只转换整数样本的平面/交错和容器表示；输入输出采样率、
   声道标签完全相同，关闭抖动，不执行重采样或降混，并检查所有有效位。
 - 进程内处理检查 context 取消，FFmpeg I/O 配置中断回调；
@@ -93,8 +145,8 @@ SHA-256 校验工具。FFmpeg 构建脚本只生成静态库，不编译命令�
 替换静态库后应使用 `go build -a` / `go test -a` 强制重新链接，避免 Go 缓存
 继续使用外部库的旧版本。
 
-**旧后端升级：** 新功能要求版本标记 `8.0.1-hdma2truehd-71-v2`。
-旧的 `v1` 静态库不能复用来构建此版本；先将 `.backend/ffmpeg-8.0.1/`
+**旧后端升级：** MKV 支持要求版本标记 `8.0.1-hdma2truehd-71-v3`。
+旧的 `v1` / `v2` 静态库不能复用来构建此版本；先将 `.backend/ffmpeg-8.0.1/`
 重命名为一个尚未占用的备份目录，再执行不带 `--reuse-backend` / `-ReuseBackend`
 的完整平台构建。不要仅执行 `--binary-only`；程序会拒绝旧版本后端。
 
@@ -259,7 +311,7 @@ TrueHD 默认校验会另外完整解码源文件和输出文件，因此需要�
 
 | 项目 | 范围 |
 |---|---|
-| 输入 | 本地单音轨音频文件，库探测确认为 `dts` / `DTS-HD MA`、`DTS-HD MA + DTS:X` 或 `DTS-HD MA + DTS:X IMAX` |
+| 输入 | 本地单音轨音频文件或明确选择的 MKV 音轨，库探测确认为 `dts` / `DTS-HD MA`、`DTS-HD MA + DTS:X` 或 `DTS-HD MA + DTS:X IMAX` |
 | 布局 | `5.1(side)`、`5.1`（后环绕）、`7.1`（保留侧环绕和后环绕） |
 | 有效精度 | 16 或 24 位；未知、20 位、32 位输入明确拒绝 |
 | 采样率 | 44.1、48、88.2、96、176.4、192 kHz；不重采样 |
@@ -276,7 +328,7 @@ Blu-ray 上限是八声道 96 kHz、六声道 192 kHz。
 需另行验证码率、各 presentation 及播放兼容性。
 
 不支持将 DTS 有损核心、DTS-HD HRA 冒充 MA，不自动猜测未知布局。
-首版不提供 GUI、MKV 提取/封装、DTS:X 对象元数据保留、Atmos 生成或批量并行。
+不提供 MKV 输出/重新封装、DTS:X 对象元数据保留、Atmos 生成或批量并行。
 
 ### 测试
 
@@ -401,7 +453,7 @@ dist/hdma2truehd-darwin-arm64/hdma2truehd-relinked doctor
 
 ## English
 
-An experimental Go command-line tool that **converts DTS-HD MA audio, including
+An experimental Go command-line and desktop tool that **converts DTS-HD MA audio, including
 DTS:X compatible channels, to Dolby TrueHD `.thd` or E-AC-3 `.eac3`** on macOS and Windows.
 It **statically links FFmpeg libraries through cgo**: probing, decoding,
 encoding and PCM verification all run in-process. No `ffmpeg` / `ffprobe`
@@ -432,12 +484,76 @@ as `DTS-HD MA`; that label does not prove that object metadata is absent.
 > compatibility have not been verified locally. This is not a Dolby-certified
 > encoder and does not guarantee Blu-ray compliance.
 
+### Desktop UI (macOS / Windows)
+
+- Batch-select or drop `.dts`, `.dtshd` and `.mkv` files. Files are read locally;
+  no upload or full-MKV copy is needed.
+- MKV inputs list container stream indices, languages, titles, formats, layouts
+  and durations. Explicitly select one or more audio tracks. Unsupported tracks
+  remain visible but disabled; lossy DTS core / HRA remain unsupported.
+- Select TrueHD, E-AC-3 or both. The desktop defaults to both; the CLI still
+  defaults to TrueHD only. E-AC-3 has separate automatic/preset bitrate choices
+  for 5.1 and 7.1; mixed queues use each track's layout-specific setting.
+  Automatic is **960 kb/s for 5.1**, **1536 kb/s for 7.1**.
+- Choose an output directory or leave it empty to use each source directory.
+  MKV outputs use `movie.track-INDEX.thd/.eac3` to distinguish selected tracks.
+  Existing outputs require explicit overwrite permission.
+- A serial queue provides per-job results, errors and cancellation. The progress
+  bar counts finished jobs, not an invented encoding-time percentage. Closing
+  the window cancels and waits for cleanup, preserving published outputs.
+  Chinese/English selection is remembered; technical diagnostics retain the
+  original English backend messages.
+- Outputs are separate audio files, not a remuxed MKV. No video/subtitle
+  decoding or DTS:X object rendering is added.
+
+Build the native **v3** FFmpeg backend below first, then run:
+
+```bash
+# macOS terminal / Windows MSYS2 UCRT64 terminal
+bash scripts/build-ui.sh
+# Optionally choose a new, nonexistent release directory
+bash scripts/build-ui.sh /absolute/path/to/new-ui-release
+```
+
+No Node.js, npm or global Wails CLI is needed: HTML/CSS/JavaScript are embedded.
+Go 1.24+, cgo and a native C toolchain are still required. Wails v2 uses system
+WebKit on macOS and requires a modern Microsoft Edge WebView2 Evergreen Runtime
+on Windows (recent versions are needed for file drop). No external FFmpeg
+dependency is introduced.
+Open `HDMA Converter.app` inside `dist/hdma2truehd-ui-darwin-<arch>/` on macOS;
+run `dist/hdma2truehd-ui-windows-<arch>/hdma2truehd-ui.exe` on Windows.
+Releases include FFmpeg relinking materials and licenses for linked Go modules.
+Review distribution obligations and sign/notarize as needed. Native Windows UI
+and drag-and-drop still require on-device validation.
+
+An original waveform-and-conversion-arrows design is shared by the application,
+interface and favicon. Its vector source is `cmd/hdma2truehd-ui/frontend/icon.svg`;
+PNG, ICO and ICNS assets are committed, so normal builds need no image tools.
+After editing the SVG, run `swift scripts/generate-icons.swift` on macOS and
+rebuild the UI. Windows packaging embeds the EXE icon with UCRT64 binutils'
+`windres`; macOS packaging copies the ICNS into the app bundle.
+
+The CLI can also select MKV audio explicitly, using global container stream
+indices rather than audio-list positions:
+
+```bash
+hdma2truehd probe --list-tracks movie.mkv
+hdma2truehd convert --stream 2 --format both movie.mkv
+```
+
+`--stream` accepts one input only. CLI output naming remains `movie.thd/.eac3`;
+use separate output directories or single-format `-o` when converting multiple
+tracks from the same MKV. Multi-track containers without explicit selection
+are rejected, never silently mapped to a default track.
+
 ### Architecture
 
-- Go: CLI, job orchestration, path safety, per-channel hashing and final output
+- Go: CLI, desktop queue, path safety, per-channel hashing and final output
   publication.
-- cgo/C bridge: `libavformat` for probing and muxing; `libavcodec` for decoding
-  and TrueHD encoding.
+- Desktop: Wails with embedded HTML/CSS/JavaScript; `internal/gui/` is
+  independent of the webview and can be tested headlessly.
+- cgo/C bridge: `libavformat` for probing (including MKV tracks) and muxing;
+  `libavcodec` for decoding and TrueHD / E-AC-3 encoding.
 - `libswresample`: converts only integer sample representations, including
   planar/interleaved storage and container width. Input/output sample rates and
   speaker labels remain identical; dithering is disabled. No resampling or
@@ -523,7 +639,7 @@ relinking rather than reusing a cached result linked against old external
 archives.
 
 **Upgrading an old backend:** This feature requires the marker
-`8.0.1-hdma2truehd-71-v2`. Old `v1` static libraries cannot be reused.
+`8.0.1-hdma2truehd-71-v3` for MKV support. Old `v1` / `v2` static libraries cannot be reused.
 Rename `.backend/ffmpeg-8.0.1/` to an unused backup directory, then run a full
 platform build without `--reuse-backend` / `-ReuseBackend`. An executable-only
 build is insufficient; the program rejects the old backend.
@@ -717,7 +833,7 @@ already published outputs. Exit codes: `0` success, `1` codec/verification failu
 
 | Item | Scope |
 |---|---|
-| Input | Local single-audio-stream files confirmed by the libraries as `dts` / `DTS-HD MA`, `DTS-HD MA + DTS:X` or `DTS-HD MA + DTS:X IMAX` |
+| Input | Local single-audio-stream files or explicitly selected MKV audio tracks confirmed by the libraries as `dts` / `DTS-HD MA`, `DTS-HD MA + DTS:X` or `DTS-HD MA + DTS:X IMAX` |
 | Layouts | `5.1(side)`, `5.1` (back surrounds), `7.1` (preserves both side and back surrounds) |
 | Effective precision | 16 or 24 bits; unknown, 20-bit and 32-bit inputs are explicitly rejected |
 | Sample rates | 44.1, 48, 88.2, 96, 176.4 and 192 kHz; no resampling |
@@ -737,8 +853,8 @@ device or disc-authoring workflow, separately validate bitrate, presentations
 and playback compatibility.
 
 Lossy DTS core or DTS-HD HRA cannot be accepted as MA, and unknown layouts are
-not guessed. The initial version does not provide a GUI, MKV extraction/muxing,
-DTS:X object metadata retention, Atmos generation or parallel batch processing.
+not guessed. MKV output/remuxing, DTS:X object metadata retention, Atmos generation
+and parallel batch processing are not provided.
 
 ### Testing
 

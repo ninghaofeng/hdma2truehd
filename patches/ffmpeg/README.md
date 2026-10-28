@@ -22,7 +22,9 @@ presentation uses both substreams. No new 5.1 downmix presentation is generated
 for 7.1, and no Dolby Digital companion/core stream is generated.
 
 The Go tool checks the linked library's build marker
-`8.0.1-hdma2truehd-71-v2`. This marker is a version check, not cryptographic
+`8.0.1-hdma2truehd-71-v3`. Version 3 additionally enables the Matroska demuxer
+for explicitly selected MKV audio tracks, without enabling video decoding.
+This marker is a version check, not cryptographic
 provenance or a substitute for testing. `doctor` performs actual in-process
 24-bit PCM round trips for each supported layout.
 

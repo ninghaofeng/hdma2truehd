@@ -37,6 +37,7 @@ jobs:
             tar
             xz
             mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-binutils
       - name: Build and verify macOS release
         # Native builds exercise cgo and platform libraries; a pure-Go cross
         # compile would not validate the FFmpeg backend or relinking materials.
@@ -48,6 +49,22 @@ jobs:
         env:
           MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: .\scripts\build-windows.ps1 -Msys2Root $env:MSYS2_ROOT
+      - name: Build and relink macOS desktop UI
+        if: runner.os == 'macOS'
+        run: |
+          bash scripts/build-ui.sh
+          bash "dist/hdma2truehd-ui-$(go env GOOS)-$(go env GOARCH)/relink/relink.sh"
+          go vet -tags desktop,production ./cmd/hdma2truehd-ui
+      - name: Build and relink Windows desktop UI
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        env:
+          CC: gcc
+          CGO_ENABLED: '1'
+        run: |
+          bash scripts/build-ui.sh
+          bash "dist/hdma2truehd-ui-$(go env GOOS)-$(go env GOARCH)/relink/relink.sh"
+          go vet -tags desktop,production ./cmd/hdma2truehd-ui
       - uses: actions/upload-artifact@v4
         with:
           name: hdma2truehd-${{ matrix.os }}-with-relink-materials

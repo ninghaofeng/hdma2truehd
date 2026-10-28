@@ -13,6 +13,9 @@ import (
 
 type Options struct {
 	Overwrite bool
+	// StreamIndex selects a container stream explicitly; nil retains the
+	// single-stream input contract instead of guessing an MKV audio track.
+	StreamIndex *int
 	// SkipVerify skips only full decoding/comparison, not output format checks.
 	SkipVerify bool
 	// EAC3Bitrate is total kb/s; zero selects the layout-specific default.
@@ -38,7 +41,12 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 	if err := b.Check(ctx); err != nil {
 		return Result{}, err
 	}
-	source, err := b.Probe(ctx, input)
+	var source Info
+	if options.StreamIndex != nil {
+		source, err = b.ProbeStream(ctx, input, *options.StreamIndex)
+	} else {
+		source, err = b.Probe(ctx, input)
+	}
 	if err != nil {
 		return Result{}, err
 	}

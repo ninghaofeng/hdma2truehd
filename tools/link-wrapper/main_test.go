@@ -88,6 +88,32 @@ func TestCapturingWindowsExportDefinition(t *testing.T) {
 	}
 }
 
+func TestDesktopRelinkName(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HDMA_RELINK_DIR", filepath.Join(dir, "relink"))
+	t.Setenv("HDMA_RELINK_NAME", "hdma2truehd-ui-relinked")
+	t.Setenv("HDMA_EXE_SUFFIX", "")
+	t.Setenv("HDMA_CC", filepath.Join(dir, "no-compiler"))
+	object := filepath.Join(dir, "go.o")
+	if err := os.WriteFile(object, []byte("object"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Args
+	t.Cleanup(func() { os.Args = old })
+	os.Args = []string{"link-wrapper", "-o", "ignored", object}
+	if err := link(); err == nil {
+		t.Fatal("expected missing compiler")
+	}
+	script, err := os.ReadFile(filepath.Join(dir, "relink", "relink.sh"))
+	if err != nil || !strings.Contains(string(script), "../hdma2truehd-ui-relinked") {
+		t.Fatalf("%s %v", script, err)
+	}
+	t.Setenv("HDMA_RELINK_NAME", "../escape")
+	if err := link(); err == nil || !strings.Contains(err.Error(), "filename") {
+		t.Fatalf("invalid relink filename: %v", err)
+	}
+}
+
 func TestMissingWindowsExportDefinition(t *testing.T) {
 	dir := t.TempDir()
 	relink := filepath.Join(dir, "relink")
@@ -102,6 +128,7 @@ func TestMissingWindowsExportDefinition(t *testing.T) {
 	if !errors.As(err, &pathError) || pathError.Path != exportFile || !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing export definition was not reported: %v", err)
 	}
+
 	if _, err := os.Stat(filepath.Join(relink, "relink.sh")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("published a relink script with missing input: %v", err)
 	}

@@ -28,6 +28,14 @@ necessary. Platform SDK paths in the captured command may need adjustment
 for your machine. Code signing, if required by your platform, must be performed
 again after re-linking.
 
+Desktop releases use the same procedure, producing `hdma2truehd-ui-relinked`
+(`.exe` on Windows), which opens the GUI rather than supporting `doctor`.
+On macOS, to test the app bundle, replace
+`HDMA Converter.app/Contents/MacOS/hdma2truehd-ui` with that relinked executable.
+The desktop UI additionally uses system WebKit or the Windows WebView2 runtime.
+Module license notices are under `licenses/`, with the linked module inventory
+in `source/modules.txt`. Review third-party distribution obligations separately.
+
 To modify FFmpeg, extract `source/ffmpeg-8.0.1-configured.tar.gz` into a working
 directory, change the relevant sources, and run `make` with the same toolchain
 and configuration. Replace `relink/libavcodec.a`, `libavformat.a`,

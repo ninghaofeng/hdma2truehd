@@ -51,9 +51,9 @@ fi
     --enable-decoder=dca,truehd,eac3,pcm_s16le,pcm_s24le,pcm_s32le \
     --enable-encoder=truehd,eac3,pcm_s16le,pcm_s24le,pcm_s32le \
     --enable-parser=dca,mlp,ac3 \
-    --enable-demuxer=dts,dtshd,truehd,eac3,wav,pcm_s16le,pcm_s24le,pcm_s32le \
+    --enable-demuxer=dts,dtshd,truehd,eac3,matroska,wav,pcm_s16le,pcm_s24le,pcm_s32le \
     --enable-muxer=truehd,eac3,wav,pcm_s16le,pcm_s24le,pcm_s32le \
     --extra-ldflags="$extra_ldflags" \
-    --extra-version=hdma2truehd-71-v2
+    --extra-version=hdma2truehd-71-v3
 make -j"${JOBS:-2}"
 printf '\nStatic libraries built in %s\nRun go test ./... and bash scripts/build-release.sh.\n' "$source_dir"

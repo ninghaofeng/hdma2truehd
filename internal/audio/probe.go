@@ -61,10 +61,60 @@ func (b Backend) Probe(ctx context.Context, path string) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
+	return fromNative(path, info), nil
+}
+
+func fromNative(path string, info av.Info) Info {
 	stream := Stream{Index: info.Index, CodecType: "audio", Codec: info.Codec, Profile: info.Profile,
 		SampleRate: strconv.Itoa(info.Rate), Channels: info.Channels, Layout: info.Layout,
 		RawBits: strconv.Itoa(info.Bits)}
-	return Info{Path: path, Stream: stream, Rate: info.Rate, Bits: info.Bits}, nil
+	return Info{Path: path, Stream: stream, Rate: info.Rate, Bits: info.Bits}
+}
+
+type Track struct {
+	Info     Info    `json:"info"`
+	Language string  `json:"language"`
+	Title    string  `json:"title"`
+	Default  bool    `json:"default"`
+	Duration float64 `json:"duration"`
+}
+
+func (b Backend) ProbeTracks(ctx context.Context, path string) ([]Track, error) {
+	path, err := localFile(path)
+	if err != nil {
+		return nil, err
+	}
+	found, err := av.ProbeTracks(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	tracks := make([]Track, 0, len(found))
+	for _, track := range found {
+		tracks = append(tracks, Track{Info: fromNative(path, track.Info), Language: track.Language,
+			Title: track.Title, Default: track.Default, Duration: track.Duration})
+	}
+	return tracks, nil
+}
+
+func (b Backend) ProbeStream(ctx context.Context, path string, index int) (Info, error) {
+	path, err := localFile(path)
+	if err != nil {
+		return Info{}, err
+	}
+	info, err := av.ProbeStream(ctx, path, index)
+	if err != nil {
+		return Info{}, err
+	}
+	return fromNative(path, info), nil
+}
+
+// ValidateEAC3 lets UI preflight reuse the exact conversion policy.
+func (i Info) ValidateEAC3(kbps int) error {
+	if err := i.ValidateSource(); err != nil {
+		return err
+	}
+	_, err := eac3Bitrate(i, kbps)
+	return err
 }
 
 func (i Info) ValidateSource() error {

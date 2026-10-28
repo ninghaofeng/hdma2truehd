@@ -40,7 +40,14 @@ func link() error {
 		output := false
 		for _, arg := range args {
 			if output {
-				replay = append(replay, "../hdma2truehd-relinked"+os.Getenv("HDMA_EXE_SUFFIX"))
+				name := os.Getenv("HDMA_RELINK_NAME")
+				if name == "" {
+					name = "hdma2truehd-relinked"
+				}
+				if filepath.Base(name) != name || name == "." || name == ".." {
+					return fmt.Errorf("HDMA_RELINK_NAME must be a filename")
+				}
+				replay = append(replay, "../"+name+os.Getenv("HDMA_EXE_SUFFIX"))
 				output = false
 				continue
 			}

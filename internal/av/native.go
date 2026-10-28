@@ -25,7 +25,7 @@ import (
 
 // Version rejects an accidentally linked stock/incompatible backend. The marker
 // identifies the required patches, but is not a cryptographic provenance check.
-const Version = "8.0.1-hdma2truehd-71-v2"
+const Version = "8.0.1-hdma2truehd-71-v3"
 
 type Info struct {
 	Index, Rate, Bits, Channels int
@@ -76,12 +76,30 @@ func Check(ctx context.Context) error {
 		return fmt.Errorf("linked FFmpeg version %q, need %q; rebuild the patched static libraries", version, Version)
 	}
 	if C.hdma_check() != 0 {
-		return fmt.Errorf("linked FFmpeg lacks required DTS/TrueHD/E-AC-3 codecs or raw TrueHD/E-AC-3 muxers")
+		return fmt.Errorf("linked FFmpeg lacks required DTS/TrueHD/E-AC-3 codecs, raw muxers or Matroska demuxer")
 	}
 	return nil
 }
 
 func Probe(ctx context.Context, path string) (Info, error) {
+	return probeStream(ctx, path, -1)
+}
+
+func ProbeStream(ctx context.Context, path string, index int) (Info, error) {
+	if index < 0 || index > 1<<31-1 {
+		return Info{}, fmt.Errorf("invalid audio stream index")
+	}
+	return probeStream(ctx, path, index)
+}
+
+func nativeMetadata(info C.HDMAInfo) Info {
+	return Info{
+		Index: int(info.index), Rate: int(info.rate), Bits: int(info.bits), Channels: int(info.channels),
+		Codec: C.GoString(&info.codec[0]), Profile: C.GoString(&info.profile[0]), Layout: C.GoString(&info.layout[0]),
+	}
+}
+
+func probeStream(ctx context.Context, path string, index int) (Info, error) {
 	if err := Check(ctx); err != nil {
 		return Info{}, err
 	}
@@ -95,14 +113,11 @@ func Probe(ctx context.Context, path string) (Info, error) {
 	defer C.free(unsafe.Pointer(input))
 	var info C.HDMAInfo
 	var message [512]C.char
-	ret := C.hdma_probe(input, C.uintptr_t(handle), &info, &message[0])
+	ret := C.hdma_probe_stream(input, C.int(index), C.uintptr_t(handle), &info, &message[0])
 	if err := result(op, ret, &message[0]); err != nil {
 		return Info{}, err
 	}
-	return Info{
-		Index: int(info.index), Rate: int(info.rate), Bits: int(info.bits), Channels: int(info.channels),
-		Codec: C.GoString(&info.codec[0]), Profile: C.GoString(&info.profile[0]), Layout: C.GoString(&info.layout[0]),
-	}, nil
+	return nativeMetadata(info), nil
 }
 
 // Process reopens path and checks it against previously probed metadata.

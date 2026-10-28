@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HDMA Converter</title>
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><img src="icon.svg" width="56" height="56" alt="" aria-hidden="true"><div><p class="eyebrow">DTS-HD MA · TRUEHD · E-AC-3</p><h1 data-i18n="title"></h1></div></div>
+    <label class="language"><span data-i18n="language"></span>
+      <select id="language" aria-label="Language"><option value="zh">简体中文</option><option value="en">English</option></select>
+    </label>
+  </header>
+  <main>
+    <section id="drop" class="drop" aria-labelledby="drop-title">
+      <div class="drop-icon" aria-hidden="true">＋</div>
+      <h2 id="drop-title" data-i18n="drop"></h2>
+      <p data-i18n="local"></p>
+      <button id="add" data-i18n="add"></button>
+    </section>
+    <div id="error" class="error" role="alert" hidden></div>
+    <section class="panel">
+      <div class="section-head"><h2 data-i18n="tracks"></h2><button id="clear" class="secondary" data-i18n="clear"></button></div>
+      <p id="empty" class="muted" data-i18n="empty"></p>
+      <div id="inputs"></div>
+    </section>
+    <section class="panel settings">
+      <h2 data-i18n="settings"></h2>
+      <div class="settings-grid">
+        <fieldset><legend data-i18n="formats"></legend>
+          <label><input id="truehd" type="checkbox" checked> TrueHD <small data-i18n="lossless"></small></label>
+          <label><input id="eac3" type="checkbox" checked> E-AC-3 <small data-i18n="lossy"></small></label>
+        </fieldset>
+        <label><span data-i18n="bitrate51"></span>
+          <select id="bitrate51">
+            <option value="0" data-i18n="auto51"></option>
+            <option value="384">384 kb/s</option><option value="448">448 kb/s</option>
+            <option value="640">640 kb/s</option><option value="768">768 kb/s</option>
+            <option value="960">960 kb/s</option><option value="1024">1024 kb/s</option>
+          </select>
+        </label>
+        <label><span data-i18n="bitrate71"></span>
+          <select id="bitrate71">
+            <option value="0" data-i18n="auto71"></option>
+            <option value="768">768 kb/s</option><option value="960">960 kb/s</option>
+            <option value="1024">1024 kb/s</option>
+            <option value="1280">1280 kb/s</option><option value="1536">1536 kb/s</option>
+          </select>
+        </label>
+      </div>
+      <p class="muted small" data-i18n="limits"></p>
+      <div class="destination"><label><span data-i18n="output"></span><input id="output" type="text" readonly></label>
+        <button id="browse" class="secondary" data-i18n="browse"></button>
+        <button id="reset-output" class="secondary" data-i18n="reset"></button>
+      </div>
+      <label class="overwrite"><input id="overwrite" type="checkbox"><span data-i18n="overwrite"></span></label>
+      <p class="muted small" data-i18n="notice"></p>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2 data-i18n="queue"></h2><span id="summary" class="muted" aria-live="polite"></span></div>
+      <progress id="progress" max="1" value="0" aria-label="Queue progress"></progress>
+      <p id="activity" class="muted" aria-live="polite"></p>
+      <ol id="jobs"></ol>
+      <div class="actions"><button id="start" data-i18n="start"></button><button id="cancel" class="secondary" disabled data-i18n="cancel"></button></div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

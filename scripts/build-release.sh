@@ -14,7 +14,23 @@ if [[ "$(go env CGO_ENABLED)" != 1 ]]; then
 fi
 os="$(go env GOOS)"
 arch="$(go env GOARCH)"
-destination="${1:-$root/dist/hdma2truehd-$os-$arch}"
+app=hdma2truehd
+package=./cmd/hdma2truehd
+tags=""
+case "${HDMA_UI:-0}" in
+    0) ;;
+    1)
+        if [[ "$os" != darwin && "$os" != windows ]]; then
+            printf 'The desktop UI supports macOS and Windows only.\n' >&2
+            exit 1
+        fi
+        app=hdma2truehd-ui
+        package=./cmd/hdma2truehd-ui
+        tags=desktop,production
+        ;;
+    *) printf 'HDMA_UI must be 0 or 1.\n' >&2; exit 2 ;;
+esac
+destination="${1:-$root/dist/$app-$os-$arch}"
 if [[ -e "$destination" ]]; then
     printf 'Refusing to overwrite release directory: %s\nChoose a new directory.\n' "$destination" >&2
     exit 1
@@ -31,13 +47,32 @@ if [[ "$os" == windows ]]; then
     native_destination="$(cygpath -m "$destination")"
 fi
 export HDMA_RELINK_DIR="$native_destination/relink"
+export HDMA_RELINK_NAME="$app-relinked"
 wrapper="$native_destination/hdma2truehd-link-cc$HDMA_EXE_SUFFIX"
 # The pure-Go wrapper intercepts the final external link while Go's temporary
 # objects still exist. Force relinking so cached build results cannot skip it.
 CGO_ENABLED=0 go build -o "$wrapper" ./tools/link-wrapper
+ldflags="-linkmode=external -extld=hdma2truehd-link-cc"
+if [[ "$app" == hdma2truehd-ui && "$os" == windows ]]; then
+    ldflags+=" -H windowsgui"
+    if ! command -v windres >/dev/null 2>&1; then
+        printf 'windres is required for the Windows application icon; install UCRT64 binutils.\n' >&2
+        exit 1
+    fi
+    resource="$root/cmd/hdma2truehd-ui/resource_windows_${arch}.syso"
+    if [[ -e "$resource" ]]; then
+        printf 'Refusing to overwrite an existing resource object: %s\n' "$resource" >&2
+        exit 1
+    fi
+    # Go embeds this COFF object in the PE executable. The captured application
+    # objects also retain it for LGPL relinking after the source copy is removed.
+    trap 'rm -f -- "$resource"' EXIT
+    windres -I "$root/cmd/hdma2truehd-ui" -i "$root/cmd/hdma2truehd-ui/app.rc" \
+        -O coff -o "$resource"
+fi
 PATH="$destination:$PATH" go build -a -trimpath \
-    -ldflags="-linkmode=external -extld=hdma2truehd-link-cc" \
-    -o "$destination/hdma2truehd$HDMA_EXE_SUFFIX" ./cmd/hdma2truehd
+    -tags "$tags" -ldflags="$ldflags" \
+    -o "$destination/$app$HDMA_EXE_SUFFIX" "$package"
 rm "$wrapper"
 test -s "$HDMA_RELINK_DIR/relink.sh"
 # A static binary alone is not the complete release: package licenses,
@@ -51,6 +86,34 @@ cp docs/RELINKING.md "$destination/RELINKING.md"
 cp patches/ffmpeg/0001-truehd-7.1-and-short-streams.patch \
     patches/ffmpeg/0002-eac3-dependent-7.1.patch "$destination/source/patches/ffmpeg/"
 cp scripts/build-ffmpeg.sh "$destination/source/scripts/"
+if [[ "$app" == hdma2truehd-ui ]]; then
+    cp go.mod go.sum "$destination/source/"
+    cp scripts/build-ui.sh scripts/build-release.sh "$destination/source/scripts/"
+    # Ship license notices for modules actually linked into the UI, not every
+    # module appearing transitively in the dependency manifest.
+    go list -tags "$tags" -deps -f '{{with .Module}}{{if not .Main}}{{.Path}}@{{.Version}}|{{.Dir}}{{end}}{{end}}' "$package" |
+        sort -u > "$destination/source/modules.txt"
+    while IFS='|' read -r module directory; do
+        [[ -z "$module" ]] && continue
+        if [[ "$os" == windows ]]; then directory="$(cygpath -u "$directory")"; fi
+        notices="$destination/licenses/${module//\//_}"
+        mkdir -p "$notices"
+        found=false
+        for notice in "$directory"/LICENSE* "$directory"/LICENCE* "$directory"/COPYING* "$directory"/NOTICE* "$directory"/PATENTS*; do
+            if [[ -f "$notice" ]]; then cp "$notice" "$notices/"; found=true; fi
+        done
+        if [[ "$found" == false ]]; then
+            printf 'WARNING: review license notices for %s (none found at module root).\n' "$module" >&2
+        fi
+    done < "$destination/source/modules.txt"
+    if [[ "$os" == darwin ]]; then
+        bundle="$destination/HDMA Converter.app/Contents"
+        mkdir -p "$bundle/MacOS" "$bundle/Resources"
+        cp cmd/hdma2truehd-ui/Info.plist "$bundle/"
+        cp cmd/hdma2truehd-ui/assets/app.icns "$bundle/Resources/"
+        cp "$destination/$app" "$bundle/MacOS/"
+    fi
+fi
 cp "$root/.backend/ffmpeg-8.0.1.tar.xz" "$destination/source/"
 # Include the exact configured sources and build scripts, not just a source URL.
 tar --exclude='*.o' --exclude='*.a' --exclude='*.d' --exclude='ffmpeg' \

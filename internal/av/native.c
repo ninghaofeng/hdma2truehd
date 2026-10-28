@@ -30,6 +30,7 @@ typedef struct Operation {
     enum AVSampleFormat input_format;
     int rate;
     int bits;
+    int stream_index;
     int64_t pts;
     int64_t samples;
     const char *stage;
@@ -45,7 +46,8 @@ int hdma_check(void)
              avcodec_find_decoder(AV_CODEC_ID_EAC3) &&
              avcodec_find_encoder(AV_CODEC_ID_EAC3) &&
              av_guess_format("truehd", NULL, NULL) &&
-             av_guess_format("eac3", NULL, NULL));
+             av_guess_format("eac3", NULL, NULL) &&
+             av_find_input_format("matroska"));
 }
 
 static int cancelled(void *opaque)
@@ -79,7 +81,7 @@ static void close_operation(Operation *op)
     av_channel_layout_uninit(&op->layout);
 }
 
-static int open_input(Operation *op, const char *path)
+static int open_container(Operation *op, const char *path)
 {
     int ret;
     op->stage = "open input";
@@ -101,43 +103,116 @@ static int open_input(Operation *op, const char *path)
     op->stage = "read stream information";
     if ((ret = avformat_find_stream_info(op->input, NULL)) < 0)
         return ret;
-    /* The public contract is one audio stream, not implicit stream selection
-     * from a movie container. Reject ambiguity rather than choosing a track. */
-    if (op->input->nb_streams != 1 ||
-        op->input->streams[0]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO)
+    return cancelled(op) ? AVERROR_EXIT : 0;
+}
+
+static int open_input(Operation *op, const char *path, int index)
+{
+    int ret = open_container(op, path);
+    if (ret < 0)
+        return ret;
+    op->stage = "select audio stream (containers require an explicit stream index)";
+    /* Preserve the original single-stream contract when no index is supplied.
+     * An explicit selection never falls back to another/default audio track. */
+    if (index < 0) {
+        if (op->input->nb_streams != 1)
+            return AVERROR_INVALIDDATA;
+        index = 0;
+    }
+    if ((unsigned)index >= op->input->nb_streams ||
+        op->input->streams[index]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO)
         return AVERROR_INVALIDDATA;
-    AVCodecParameters *par = op->input->streams[0]->codecpar;
+    op->stream_index = index;
+    AVCodecParameters *par = op->input->streams[index]->codecpar;
     if (par->codec_id == AV_CODEC_ID_NONE || par->sample_rate <= 0 ||
         !av_channel_layout_check(&par->ch_layout))
         return AVERROR_INVALIDDATA;
     return cancelled(op) ? AVERROR_EXIT : 0;
 }
 
-int hdma_probe(const char *path, uintptr_t handle, HDMAInfo *info, char *error)
+static int describe_stream(AVStream *stream, HDMAInfo *info)
+{
+    AVCodecParameters *par = stream->codecpar;
+    const char *profile = avcodec_profile_name(par->codec_id, par->profile);
+    info->index = stream->index;
+    info->rate = par->sample_rate;
+    info->bits = par->bits_per_raw_sample ? par->bits_per_raw_sample : par->bits_per_coded_sample;
+    info->channels = par->ch_layout.nb_channels;
+    snprintf(info->codec, sizeof(info->codec), "%s", avcodec_get_name(par->codec_id));
+    snprintf(info->profile, sizeof(info->profile), "%s", profile ? profile : "");
+    return av_channel_layout_describe(&par->ch_layout, info->layout, sizeof(info->layout));
+}
+
+int hdma_probe_stream(const char *path, int index, uintptr_t handle, HDMAInfo *info, char *error)
 {
     Operation op = {.handle = handle};
-    int ret = open_input(&op, path);
-    if (ret >= 0) {
-        AVStream *stream = op.input->streams[0];
-        AVCodecParameters *par = stream->codecpar;
-        const char *profile = avcodec_profile_name(par->codec_id, par->profile);
-        info->index = stream->index;
-        info->rate = par->sample_rate;
-        info->bits = par->bits_per_raw_sample ? par->bits_per_raw_sample : par->bits_per_coded_sample;
-        info->channels = par->ch_layout.nb_channels;
-        snprintf(info->codec, sizeof(info->codec), "%s", avcodec_get_name(par->codec_id));
-        snprintf(info->profile, sizeof(info->profile), "%s", profile ? profile : "");
-        ret = av_channel_layout_describe(&par->ch_layout, info->layout, sizeof(info->layout));
-    }
+    int ret = open_input(&op, path, index);
+    if (ret >= 0)
+        ret = describe_stream(op.input->streams[op.stream_index], info);
     if (ret < 0)
         fail(error, op.stage, ret);
     close_operation(&op);
     return ret;
 }
 
+int hdma_probe(const char *path, uintptr_t handle, HDMAInfo *info, char *error)
+{
+    return hdma_probe_stream(path, -1, handle, info, error);
+}
+
+void hdma_tracks_free(HDMATrack *tracks) { av_free(tracks); }
+
+int hdma_probe_tracks(const char *path, uintptr_t handle, HDMATrack **tracks,
+                      int *count, char *error)
+{
+    Operation op = {.handle = handle};
+    *tracks = NULL;
+    *count = 0;
+    int ret = open_container(&op, path);
+    if (ret < 0)
+        goto end;
+    op.stage = "enumerate audio streams";
+    if (op.input->nb_streams > INT_MAX) {
+        ret = AVERROR_INVALIDDATA;
+        goto end;
+    }
+    *tracks = av_calloc(op.input->nb_streams, sizeof(**tracks));
+    if (!*tracks) {
+        ret = AVERROR(ENOMEM);
+        goto end;
+    }
+    for (unsigned i = 0; i < op.input->nb_streams; i++) {
+        AVStream *stream = op.input->streams[i];
+        if (stream->codecpar->codec_type != AVMEDIA_TYPE_AUDIO)
+            continue;
+        HDMATrack *track = &(*tracks)[(*count)++];
+        if ((ret = describe_stream(stream, &track->info)) < 0)
+            goto end;
+        AVDictionaryEntry *language = av_dict_get(stream->metadata, "language", NULL, 0);
+        AVDictionaryEntry *title = av_dict_get(stream->metadata, "title", NULL, 0);
+        snprintf(track->language, sizeof(track->language), "%s", language ? language->value : "");
+        snprintf(track->title, sizeof(track->title), "%s", title ? title->value : "");
+        track->is_default = !!(stream->disposition & AV_DISPOSITION_DEFAULT);
+        track->duration_us = stream->duration != AV_NOPTS_VALUE ?
+            av_rescale_q(stream->duration, stream->time_base, AV_TIME_BASE_Q) :
+            op.input->duration != AV_NOPTS_VALUE ? op.input->duration : 0;
+    }
+    if (!*count)
+        ret = AVERROR_STREAM_NOT_FOUND;
+end:
+    if (ret < 0) {
+        hdma_tracks_free(*tracks);
+        *tracks = NULL;
+        *count = 0;
+        fail(error, op.stage, ret);
+    }
+    close_operation(&op);
+    return ret;
+}
+
 static int open_decoder(Operation *op, const HDMAInfo *expected)
 {
-    AVCodecParameters *par = op->input->streams[0]->codecpar;
+    AVCodecParameters *par = op->input->streams[op->stream_index]->codecpar;
     const AVCodec *codec = avcodec_find_decoder(par->codec_id);
     int ret;
     op->stage = "open decoder / validate input format";
@@ -147,7 +222,7 @@ static int open_decoder(Operation *op, const HDMAInfo *expected)
         return ret;
     /* Probe and processing reopen the file separately. Refuse changes to the
      * expected stream identity/format rather than encoding under stale labels. */
-    if (expected->index != op->input->streams[0]->index ||
+    if (expected->index != op->input->streams[op->stream_index]->index ||
         expected->rate != par->sample_rate || expected->channels != par->ch_layout.nb_channels ||
         av_channel_layout_compare(&op->layout, &par->ch_layout))
         return AVERROR_INVALIDDATA;
@@ -386,7 +461,7 @@ int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
 {
     Operation op = {.handle = handle};
     AVPacket *packet = NULL;
-    int ret = open_input(&op, path);
+    int ret = open_input(&op, path, expected->index);
     if (ret < 0 || (ret = open_decoder(&op, expected)) < 0)
         goto end;
     /* NULL output selects decode/hash callbacks. Otherwise Go supplies a
@@ -404,7 +479,7 @@ int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
             ret = AVERROR_EXIT;
             goto end;
         }
-        if (packet->flags & AV_PKT_FLAG_CORRUPT) {
+        if (packet->stream_index == expected->index && (packet->flags & AV_PKT_FLAG_CORRUPT)) {
             ret = AVERROR_INVALIDDATA;
             goto end;
         }

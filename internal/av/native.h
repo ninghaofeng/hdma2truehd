@@ -19,6 +19,20 @@ typedef struct HDMAInfo {
 const char *hdma_version(void);
 int hdma_check(void);
 int hdma_probe(const char *path, uintptr_t handle, HDMAInfo *info, char *error);
+typedef struct HDMATrack {
+    HDMAInfo info;
+    char language[64];
+    char title[512];
+    int is_default;
+    int64_t duration_us;
+} HDMATrack;
+/* Enumeration owns a C allocation until hdma_tracks_free. Stream indices are
+ * container indices, not ordinal positions in the audio-only result list. */
+int hdma_probe_tracks(const char *path, uintptr_t handle, HDMATrack **tracks,
+                      int *count, char *error);
+void hdma_tracks_free(HDMATrack *tracks);
+int hdma_probe_stream(const char *path, int index, uintptr_t handle,
+                      HDMAInfo *info, char *error);
 /* output == NULL selects PCM callbacks; otherwise encode to that private path.
  * The caller supplies a 512-byte error buffer and a live Go callback handle
  * for each synchronous call. A negative return is an FFmpeg error code. */

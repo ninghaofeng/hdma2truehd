@@ -30,6 +30,7 @@ Convert options (put flags before input paths):
   -o PATH             Single-file .thd/.eac3 output (not with --format both)
   --output-dir DIR    Batch output directory (must already exist)
   --format FORMAT     truehd (default), eac3, or both
+  --stream N          Explicit container audio stream index (one input only)
   --eac3-bitrate N    Total kb/s; default 960 for 5.1(side), 1536 for 7.1
   --overwrite         Explicitly replace existing outputs after success
   --skip-verify       Skip full output verification; result is UNVERIFIED
@@ -41,7 +42,8 @@ E-AC-3 7.1 uses independent+dependent substreams, not Atmos or a 5.1 fallback.
 Raw E-AC-3 retains 256 samples of encoder delay plus final frame padding.
 E-AC-3 validation checks complete decoding, format and length, not PCM equality.
 DTS:X/IMAX uses compatible 5.1/7.1 channels only, without object rendering or metadata.
-No upmixing, downmixing, resampling, Atmos, or MKV processing.
+Use "probe --list-tracks INPUT.mkv" to list container audio tracks.
+No upmixing, downmixing, resampling, Atmos, or MKV output/remuxing.
 `
 
 func main() {
@@ -70,14 +72,20 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 	flags.SetOutput(errOut)
 	var output, outputDir, format string
 	var eac3Bitrate int
+	streamIndex := -1
+	var listTracks bool
 	var overwrite, skipVerify bool
 	if command == "convert" {
 		flags.StringVar(&output, "o", "", "single-file output")
 		flags.StringVar(&outputDir, "output-dir", "", "existing output directory")
 		flags.StringVar(&format, "format", "truehd", "truehd, eac3 or both")
 		flags.IntVar(&eac3Bitrate, "eac3-bitrate", 0, "total E-AC-3 kb/s; 0 selects a default")
+		flags.IntVar(&streamIndex, "stream", -1, "explicit audio stream index")
 		flags.BoolVar(&overwrite, "overwrite", false, "replace existing outputs")
 		flags.BoolVar(&skipVerify, "skip-verify", false, "skip full PCM comparison")
+	}
+	if command == "probe" {
+		flags.BoolVar(&listTracks, "list-tracks", false, "list all container audio tracks")
 	}
 	// flag stops at the first positional argument. planJobs rejects later
 	// option-looking paths rather than silently treating misplaced flags as files.
@@ -93,6 +101,20 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		if flags.NArg() != 1 {
 			fmt.Fprintln(errOut, "probe requires exactly one input")
 			return 2
+		}
+		if listTracks {
+			tracks, err := backend.ProbeTracks(ctx, flags.Arg(0))
+			if err != nil {
+				fmt.Fprintln(errOut, err)
+				return 1
+			}
+			encoder := json.NewEncoder(out)
+			encoder.SetIndent("", "  ")
+			if err := encoder.Encode(tracks); err != nil {
+				fmt.Fprintln(errOut, err)
+				return 1
+			}
+			return 0
 		}
 		info, err := backend.Probe(ctx, flags.Arg(0))
 		if err == nil {
@@ -124,6 +146,10 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	// Validate the whole batch before writing any output, including outputs
 	// that would replace another job's source rather than their own source.
+	if streamIndex < -1 || (streamIndex >= 0 && flags.NArg() != 1) {
+		fmt.Fprintln(errOut, "--stream requires a nonnegative index and exactly one input")
+		return 2
+	}
 	if (eac3Bitrate != 0 && (eac3Bitrate < 384 || eac3Bitrate > 1536 || eac3Bitrate%32 != 0)) ||
 		(format == "truehd" && eac3Bitrate != 0) {
 		fmt.Fprintln(errOut, "--eac3-bitrate requires eac3/both; use 0 for automatic or 384..1536 kb/s in steps of 32 (layout limits also apply)")
@@ -138,7 +164,11 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
-	return processJobs(ctx, jobs, audio.Options{Overwrite: overwrite, SkipVerify: skipVerify, EAC3Bitrate: eac3Bitrate}, backend.Convert, out, errOut)
+	options := audio.Options{Overwrite: overwrite, SkipVerify: skipVerify, EAC3Bitrate: eac3Bitrate}
+	if streamIndex >= 0 {
+		options.StreamIndex = &streamIndex
+	}
+	return processJobs(ctx, jobs, options, backend.Convert, out, errOut)
 }
 
 func processJobs(ctx context.Context, jobs []job, options audio.Options,
