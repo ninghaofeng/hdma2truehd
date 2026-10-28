@@ -25,4 +25,11 @@ int hdma_probe(const char *path, uintptr_t handle, HDMAInfo *info, char *error);
 int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
                  uintptr_t handle, char *error);
 
+typedef struct HDMAEAC3 HDMAEAC3;
+int hdma_eac3_open(const char *path, int channels, int bitrate,
+                   uintptr_t handle, HDMAEAC3 **result, char *error);
+int hdma_eac3_write(HDMAEAC3 *op, const unsigned char *pcm, int size, char *error);
+int hdma_eac3_finish(HDMAEAC3 *op, uint64_t *samples, uint64_t *decoded, char *error);
+void hdma_eac3_close(HDMAEAC3 *op);
+
 #endif

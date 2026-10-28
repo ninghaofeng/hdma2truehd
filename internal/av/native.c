@@ -42,7 +42,10 @@ int hdma_check(void)
     return !(avcodec_find_decoder(AV_CODEC_ID_DTS) &&
              avcodec_find_decoder(AV_CODEC_ID_TRUEHD) &&
              avcodec_find_encoder(AV_CODEC_ID_TRUEHD) &&
-             av_guess_format("truehd", NULL, NULL));
+             avcodec_find_decoder(AV_CODEC_ID_EAC3) &&
+             avcodec_find_encoder(AV_CODEC_ID_EAC3) &&
+             av_guess_format("truehd", NULL, NULL) &&
+             av_guess_format("eac3", NULL, NULL));
 }
 
 static int cancelled(void *opaque)
@@ -309,7 +312,7 @@ static int consume_frame(Operation *op, AVFrame *frame)
     /* Check unused low bits before narrowing or hashing. A 32-bit container
      * must not hide precision beyond the declared 16/24 effective bits. */
     for (int i = 0; i < count * channels; i++) {
-        uint32_t mask = op->bits == 16 ? 0xffff : 0xff;
+        uint32_t mask = op->bits == 32 ? 0 : op->bits == 16 ? 0xffff : 0xff;
         if (((uint32_t *)pcm)[i] & mask) {
             op->stage = "decoded PCM exceeds declared effective precision";
             ret = AVERROR_INVALIDDATA;

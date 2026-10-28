@@ -7,21 +7,29 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ninghaofeng/hdma2truehd/internal/av"
 )
 
 type Options struct {
 	Overwrite bool
 	// SkipVerify skips only full decoding/comparison, not output format checks.
 	SkipVerify bool
+	// EAC3Bitrate is total kb/s; zero selects the layout-specific default.
+	EAC3Bitrate int
 }
 
-// Result describes a published output. Samples is populated only after full
-// PCM verification; a successful unverified encode leaves it at zero.
+// Result describes a published output. Verified means lossless PCM equality;
+// Validated means a lossy output passed complete decoding and format/length
+// checks, not equality. Samples is source length; unverified results leave zero.
 type Result struct {
-	Input    string
-	Output   string
-	Verified bool
-	Samples  uint64
+	Input          string
+	Output         string
+	Verified       bool
+	Samples        uint64
+	Lossy          bool
+	Validated      bool
+	DecodedSamples uint64
 }
 
 // Convert encodes to a private file, validates it and only then publishes it.
@@ -41,8 +49,17 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 	if err != nil {
 		return Result{}, err
 	}
-	if !strings.EqualFold(filepath.Ext(output), ".thd") {
-		return Result{}, fmt.Errorf("output must use the .thd extension")
+	extension := strings.ToLower(filepath.Ext(output))
+	lossy := extension == ".eac3"
+	if extension != ".thd" && !lossy {
+		return Result{}, fmt.Errorf("output must use the .thd or .eac3 extension")
+	}
+	bitrate := 0
+	if lossy {
+		bitrate, err = eac3Bitrate(source, options.EAC3Bitrate)
+		if err != nil {
+			return Result{}, err
+		}
 	}
 	inputStat, err := os.Stat(source.Path)
 	if err != nil {
@@ -76,19 +93,35 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 			err = errors.Join(err, fmt.Errorf("clean up %s: %w", tempDir, cleanupErr))
 		}
 	}()
-	temp := filepath.Join(tempDir, "output.thd")
-	if err := b.Encode(ctx, source, temp); err != nil {
+	temp := filepath.Join(tempDir, "output"+extension)
+	var stats av.EAC3Stats
+	if lossy {
+		stats, err = av.EncodeEAC3(ctx, source.Path, temp, nativeInfo(source), bitrate)
+	} else {
+		err = b.Encode(ctx, source, temp)
+	}
+	if err != nil {
 		return Result{}, fmt.Errorf("encode: %w", err)
 	}
 	encoded, err := b.Probe(ctx, temp)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := matchingOutput(source, encoded); err != nil {
+	if lossy {
+		err = matchingEAC3(source, encoded)
+	} else {
+		err = matchingOutput(source, encoded)
+	}
+	if err != nil {
 		return Result{}, err
 	}
-	result = Result{Input: source.Path, Output: output}
-	if !options.SkipVerify {
+	result = Result{Input: source.Path, Output: output, Lossy: lossy}
+	if lossy && !options.SkipVerify {
+		if err := validateEAC3(ctx, encoded, stats); err != nil {
+			return Result{}, err
+		}
+		result.Validated, result.Samples, result.DecodedSamples = true, stats.Samples, stats.Decoded
+	} else if !options.SkipVerify {
 		// Metadata alone cannot detect truncation, changed low bits or channel
 		// swaps. Decode both complete streams before committing the output.
 		originalPCM, err := b.Digest(ctx, source)

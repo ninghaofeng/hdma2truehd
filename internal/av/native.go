@@ -25,7 +25,7 @@ import (
 
 // Version rejects an accidentally linked stock/incompatible backend. The marker
 // identifies the required patches, but is not a cryptographic provenance check.
-const Version = "8.0.1-hdma2truehd-71-v1"
+const Version = "8.0.1-hdma2truehd-71-v2"
 
 type Info struct {
 	Index, Rate, Bits, Channels int
@@ -76,7 +76,7 @@ func Check(ctx context.Context) error {
 		return fmt.Errorf("linked FFmpeg version %q, need %q; rebuild the patched static libraries", version, Version)
 	}
 	if C.hdma_check() != 0 {
-		return fmt.Errorf("linked FFmpeg lacks DTS/TrueHD codecs or the raw TrueHD muxer")
+		return fmt.Errorf("linked FFmpeg lacks required DTS/TrueHD/E-AC-3 codecs or raw TrueHD/E-AC-3 muxers")
 	}
 	return nil
 }
@@ -115,8 +115,11 @@ func Process(ctx context.Context, path, output string, expected Info, out io.Wri
 	if strings.ContainsRune(path, 0) || strings.ContainsRune(output, 0) {
 		return fmt.Errorf("file path contains NUL")
 	}
+	// Lossy E-AC-3 validation decodes to full-width int32; it cannot assert
+	// an effective 16/24-bit precision or compare against the original PCM.
+	lossyDecode := output == "" && expected.Codec == "eac3" && expected.Bits == 32
 	if expected.Channels < 1 || expected.Channels > 8 || expected.Rate <= 0 ||
-		(expected.Bits != 16 && expected.Bits != 24) {
+		(expected.Bits != 16 && expected.Bits != 24 && !lossyDecode) {
 		return fmt.Errorf("invalid expected PCM format")
 	}
 	if output == "" && out == nil {

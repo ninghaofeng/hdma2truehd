@@ -8,6 +8,8 @@ if [[ "${OS:-}" == Windows_NT ]]; then
     binary_name="${binary_name}.exe"
 fi
 overwrite=false
+format=truehd
+eac3_bitrate=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -23,9 +25,21 @@ while [[ $# -gt 0 ]]; do
             overwrite=true
             shift
             ;;
+        --format|--eac3-bitrate)
+            if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
+                printf '%s requires a value.\n' "$1" >&2
+                exit 2
+            fi
+            if [[ "$1" == --format ]]; then
+                format="$2"
+            else
+                eac3_bitrate="$2"
+            fi
+            shift 2
+            ;;
         --help|-h)
-            printf 'Usage: bash scripts/test-samples.sh [--binary PATH] [--overwrite]\n'
-            printf 'Convert samples/*.dts and samples/*.dtshd to .thd with full PCM verification.\n'
+            printf 'Usage: bash scripts/test-samples.sh [--binary PATH] [--overwrite] [--format truehd|eac3|both] [--eac3-bitrate KBPS]\n'
+            printf 'Convert samples/*.dts and samples/*.dtshd; TrueHD uses full PCM comparison, lossy E-AC-3 uses strict decode/format/length validation.\n'
             printf 'Default: find one hdma2truehd executable in dist/ or its immediate release subdirectories (.exe on Windows).\n'
             printf 'If multiple releases exist, specify --binary PATH.\n'
             printf 'Existing outputs are preserved unless --overwrite is specified.\n'
@@ -69,7 +83,7 @@ fi
 shopt -s nullglob nocaseglob
 inputs=()
 # Only compressed inputs at the top level are fixtures. Never feed an existing
-# .thd back into conversion or recurse into unrelated large source collections.
+# encoded outputs back into conversion or recurse into large source collections.
 for input in "$root"/samples/*.dts "$root"/samples/*.dtshd; do
     if [[ -f "$input" ]]; then
         inputs+=("$input")
@@ -80,11 +94,14 @@ if [[ ${#inputs[@]} -eq 0 ]]; then
     exit 1
 fi
 
-options=(convert --output-dir "$root/samples")
+options=(convert --format "$format" --output-dir "$root/samples")
+if [[ -n "$eac3_bitrate" ]]; then
+    options+=(--eac3-bitrate "$eac3_bitrate")
+fi
 if [[ "$overwrite" == true ]]; then
     options+=(--overwrite)
 fi
-printf 'Converting %d sample(s) with full PCM verification.\n' "${#inputs[@]}"
+printf 'Converting %d sample(s), format=%s, with full format-appropriate verification.\n' "${#inputs[@]}" "$format"
 printf 'Using executable: %s\n' "$binary"
 # Do not pass --skip-verify; preserve the converter's status for automation.
 exec "$binary" "${options[@]}" "${inputs[@]}"

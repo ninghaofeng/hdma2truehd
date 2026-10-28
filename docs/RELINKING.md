@@ -33,7 +33,7 @@ directory, change the relevant sources, and run `make` with the same toolchain
 and configuration. Replace `relink/libavcodec.a`, `libavformat.a`,
 `libavutil.a`, and `libswresample.a` with the new archives. The configured
 archive includes `ffbuild/config.log`, the configure command and the patched
-source. The original source archive, patch, build script and toolchain details
+source. The original source archive, patches, build script and toolchain details
 are also included in `source/`. The source archive is provided, not just a
 download link.
 

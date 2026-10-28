@@ -78,6 +78,27 @@ func TestDTSHDMAConversion(t *testing.T) {
 			if !result.Verified || result.Samples == 0 {
 				t.Fatalf("conversion was not fully verified: %+v", result)
 			}
+			t.Run("EAC3", func(t *testing.T) {
+				if source.Rate != 48000 || (source.Stream.Layout != "5.1(side)" && source.Stream.Layout != "7.1") {
+					t.Skip("E-AC-3 requires a 48 kHz 5.1(side) or 7.1 fixture")
+				}
+				target := filepath.Join(t.TempDir(), "output.eac3")
+				converted, err := b.Convert(t.Context(), path, target, audio.Options{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !converted.Validated || !converted.Lossy || converted.Verified || converted.Samples != result.Samples ||
+					converted.DecodedSamples != (result.Samples+256+1535)/1536*1536 {
+					t.Fatalf("wrong lossy validation result: %+v", converted)
+				}
+				if _, err := b.Convert(t.Context(), path, target, audio.Options{}); err == nil {
+					t.Fatal("overwrote E-AC-3 without permission")
+				}
+				unverified, err := b.Convert(t.Context(), path, target, audio.Options{Overwrite: true, SkipVerify: true})
+				if err != nil || unverified.Validated || unverified.Verified || !unverified.Lossy {
+					t.Fatalf("incorrect skip/overwrite behavior: %+v %v", unverified, err)
+				}
+			})
 		})
 	}
 }

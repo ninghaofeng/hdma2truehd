@@ -48,7 +48,8 @@ cp patches/ffmpeg/README.md "$destination/licenses/FFmpeg-NOTICE.md"
 cp "$(go env GOROOT)/LICENSE" "$destination/licenses/Go-LICENSE"
 cp "$(go env GOROOT)/PATENTS" "$destination/licenses/Go-PATENTS"
 cp docs/RELINKING.md "$destination/RELINKING.md"
-cp patches/ffmpeg/0001-truehd-7.1-and-short-streams.patch "$destination/source/patches/ffmpeg/"
+cp patches/ffmpeg/0001-truehd-7.1-and-short-streams.patch \
+    patches/ffmpeg/0002-eac3-dependent-7.1.patch "$destination/source/patches/ffmpeg/"
 cp scripts/build-ffmpeg.sh "$destination/source/scripts/"
 cp "$root/.backend/ffmpeg-8.0.1.tar.xz" "$destination/source/"
 # Include the exact configured sources and build scripts, not just a source URL.

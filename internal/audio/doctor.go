@@ -75,6 +75,27 @@ func (b Backend) SelfTest(ctx context.Context) (err error) {
 		if err := ComparePCM(original, decoded); err != nil {
 			return fmt.Errorf("%s self-test: %w", layout, err)
 		}
+		if layout != "5.1" {
+			eac3Output := filepath.Join(dir, "output.eac3")
+			bitrate, err := eac3Bitrate(input, 0)
+			if err != nil {
+				return err
+			}
+			stats, err := av.EncodeEAC3(ctx, source, eac3Output, nativeInfo(input), bitrate)
+			if err != nil {
+				return fmt.Errorf("%s E-AC-3 self-test encode: %w", layout, err)
+			}
+			encoded, err := b.Probe(ctx, eac3Output)
+			if err != nil {
+				return err
+			}
+			if err := matchingEAC3(input, encoded); err != nil {
+				return err
+			}
+			if err := validateEAC3(ctx, encoded, stats); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

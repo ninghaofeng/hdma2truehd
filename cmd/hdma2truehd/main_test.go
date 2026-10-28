@@ -16,7 +16,7 @@ func TestPlanJobs(t *testing.T) {
 	dir := t.TempDir()
 	a := filepath.Join(dir, "a.dts")
 	b := filepath.Join(dir, "b.dts")
-	jobs, err := planJobs([]string{a, b}, "", dir)
+	jobs, err := planJobs([]string{a, b}, "", dir, "truehd")
 	if err != nil || len(jobs) != 2 || jobs[0].output != filepath.Join(dir, "a.thd") {
 		t.Fatalf("%+v %v", jobs, err)
 	}
@@ -34,7 +34,7 @@ func TestPlanJobs(t *testing.T) {
 		{[]string{a, filepath.Join(dir, "a.thd")}, "", dir},
 		{[]string{a, "--skip-verify"}, "", ""},
 	} {
-		if _, err := planJobs(tt.inputs, tt.output, tt.dir); err == nil {
+		if _, err := planJobs(tt.inputs, tt.output, tt.dir, "truehd"); err == nil {
 			t.Fatalf("accepted invalid job specification %+v", tt)
 		}
 	}
@@ -51,8 +51,37 @@ func TestPlanJobsHardLink(t *testing.T) {
 	if err := os.Link(input, output); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := planJobs([]string{input}, output, ""); err == nil {
+	if _, err := planJobs([]string{input}, output, "", "truehd"); err == nil {
 		t.Fatal("accepted output aliasing an input")
+	}
+}
+
+func TestOutputFormats(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "source.dts")
+	jobs, err := planJobs([]string{input}, "", dir, "both")
+	if err != nil || len(jobs) != 2 || filepath.Ext(jobs[0].output) != ".thd" || filepath.Ext(jobs[1].output) != ".eac3" {
+		t.Fatalf("wrong dual-format jobs: %+v %v", jobs, err)
+	}
+	jobs, err = planJobs([]string{input}, filepath.Join(dir, "custom.eac3"), "", "eac3")
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("wrong E-AC-3 job: %+v %v", jobs, err)
+	}
+	for _, tt := range []struct{ output, format string }{
+		{"", "aac"}, {"output.thd", "both"}, {"output.thd", "eac3"}, {"output.eac3", "truehd"},
+	} {
+		if _, err := planJobs([]string{input}, tt.output, "", tt.format); err == nil {
+			t.Fatalf("accepted %+v", tt)
+		}
+	}
+	var out, errOut bytes.Buffer
+	code := processJobs(t.Context(), []job{{input, "output.eac3"}}, audio.Options{},
+		func(context.Context, string, string, audio.Options) (audio.Result, error) {
+			return audio.Result{Output: "output.eac3", Lossy: true, Validated: true, Samples: 100, DecodedSamples: 1536}, nil
+		}, &out, &errOut)
+	if code != 0 || !strings.Contains(out.String(), "VALIDATED (LOSSY)") ||
+		strings.Contains(out.String(), "VERIFIED:") || !strings.Contains(out.String(), "0 unverified") {
+		t.Fatalf("misleading lossy result: code=%d %s", code, &out)
 	}
 }
 

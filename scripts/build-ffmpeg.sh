@@ -31,6 +31,7 @@ fi
 tar -xf "$archive" -C "$build"
 cd "$source_dir"
 patch --batch --forward -p1 < "$root/patches/ffmpeg/0001-truehd-7.1-and-short-streams.patch"
+patch --batch --forward -p1 < "$root/patches/ffmpeg/0002-eac3-dependent-7.1.patch"
 extra_ldflags=""
 if [[ "${MSYSTEM:-}" == "UCRT64" ]]; then
     extra_ldflags="-static"
@@ -46,12 +47,12 @@ fi
     --disable-avdevice --disable-avfilter --disable-swscale \
     --enable-swresample \
     --enable-protocol=file \
-    --enable-decoder=dca,truehd,pcm_s16le,pcm_s24le,pcm_s32le \
-    --enable-encoder=truehd,pcm_s16le,pcm_s24le,pcm_s32le \
-    --enable-parser=dca,mlp \
-    --enable-demuxer=dts,dtshd,truehd,wav,pcm_s16le,pcm_s24le,pcm_s32le \
-    --enable-muxer=truehd,wav,pcm_s16le,pcm_s24le,pcm_s32le \
+    --enable-decoder=dca,truehd,eac3,pcm_s16le,pcm_s24le,pcm_s32le \
+    --enable-encoder=truehd,eac3,pcm_s16le,pcm_s24le,pcm_s32le \
+    --enable-parser=dca,mlp,ac3 \
+    --enable-demuxer=dts,dtshd,truehd,eac3,wav,pcm_s16le,pcm_s24le,pcm_s32le \
+    --enable-muxer=truehd,eac3,wav,pcm_s16le,pcm_s24le,pcm_s32le \
     --extra-ldflags="$extra_ldflags" \
-    --extra-version=hdma2truehd-71-v1
+    --extra-version=hdma2truehd-71-v2
 make -j"${JOBS:-2}"
 printf '\nStatic libraries built in %s\nRun go test ./... and bash scripts/build-release.sh.\n' "$source_dir"

@@ -2,7 +2,10 @@
 param(
     [ValidateNotNullOrEmpty()]
     [string]$Binary,
-    [switch]$Overwrite
+    [switch]$Overwrite,
+    [ValidateSet('truehd', 'eac3', 'both')]
+    [string]$Format = 'truehd',
+    [int]$Eac3Bitrate = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,15 +56,18 @@ if ($inputs.Count -eq 0) {
     throw "No .dts or .dtshd sample files found in $samples."
 }
 
-$convertArgs = @('convert', '--output-dir', $samples)
+$convertArgs = @('convert', '--format', $Format.ToLowerInvariant(), '--output-dir', $samples)
 # Verification is intentionally not configurable here; every sample must pass
-# the CLI's default full PCM comparison before its output is published.
+# full PCM comparison (TrueHD) or lossy decode/format/length validation (E-AC-3).
+if ($Eac3Bitrate -ne 0) {
+    $convertArgs += @('--eac3-bitrate', $Eac3Bitrate.ToString())
+}
 if ($Overwrite) {
     $convertArgs += '--overwrite'
 }
 $convertArgs += $inputs
 
-Write-Host ("Converting {0} sample(s) with full PCM verification." -f $inputs.Count)
+Write-Host ("Converting {0} sample(s), format={1}, with full format-appropriate verification." -f $inputs.Count, $Format)
 Write-Host "Using executable: $Binary"
 & $Binary @convertArgs
 exit $LASTEXITCODE
