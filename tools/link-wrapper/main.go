@@ -91,6 +91,8 @@ func link() error {
 			}
 			replay = append(replay, arg)
 		}
+		// Write the replay script last: a missing input must fail before
+		// advertising a replay command for this link.
 		var script strings.Builder
 		script.WriteString("#!/usr/bin/env bash\nset -euo pipefail\ncd \"$(dirname \"$0\")\"\n\"${CC:-cc}\" ")
 		for _, arg := range replay {

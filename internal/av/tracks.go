@@ -44,6 +44,8 @@ func ProbeTracks(ctx context.Context, path string) ([]Track, error) {
 		return nil, err
 	}
 	found := make([]Track, 0, int(count))
+	// Copy all fields before freeing the C array. Fixed-size metadata buffers
+	// can truncate a UTF-8 code point; repair text only, never stream identity.
 	for _, track := range unsafe.Slice(tracks, int(count)) {
 		found = append(found, Track{
 			Info:     nativeMetadata(track.info),

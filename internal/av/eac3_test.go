@@ -25,6 +25,8 @@ func TestEAC3RoundTrip(t *testing.T) {
 					dir := t.TempDir()
 					source, output := filepath.Join(dir, "source.wav"), filepath.Join(dir, "output.eac3")
 					pcm := make([]byte, count*channels*4)
+					// Keep LFE below its intentional low-pass cutoff; the
+					// other unique tones distinguish all surround positions.
 					frequencies := []float64{379, 499, 619, 59, 751, 877, 1009, 1151}
 					for n := 0; n < count; n++ {
 						for ch := 0; ch < channels; ch++ {
@@ -78,6 +80,8 @@ func TestEAC3RoundTrip(t *testing.T) {
 								noise += (actual - wanted) * (actual - wanted)
 							}
 							snr := 10 * math.Log10(signal/noise)
+							// A routing/distortion regression threshold for
+							// these tones, not a general audio-quality rating.
 							if math.IsNaN(snr) || snr < 25 {
 								t.Fatalf("channel %d SNR %.2f dB; wrong route or excessive distortion", ch, snr)
 							}

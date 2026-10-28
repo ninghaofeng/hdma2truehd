@@ -45,6 +45,8 @@ func (a *App) ChooseFiles() ([]gui.Input, error) {
 		return nil, err
 	}
 	if len(paths) == 0 {
+		// Picker cancellation is an empty addition, not a probe failure.
+		// Return [] rather than null so JavaScript can iterate the result.
 		return []gui.Input{}, nil
 	}
 	return a.Inspect(paths)
@@ -76,6 +78,8 @@ func main() {
 		DragAndDrop:      &options.DragAndDrop{EnableFileDrop: true, DisableWebViewDrop: true},
 		OnStartup:        func(ctx context.Context) { app.ctx, app.stop = context.WithCancel(ctx) },
 		OnBeforeClose: func(context.Context) bool {
+			// Suppress the worker's terminal queue event before cancelling.
+			// Keep the app alive until native cleanup has finished.
 			app.closing.Store(true)
 			app.stop()
 			app.service.Shutdown()

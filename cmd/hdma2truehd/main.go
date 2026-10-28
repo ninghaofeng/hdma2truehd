@@ -144,8 +144,8 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(out, "Not a DTS-HD MA fixture test or hardware compatibility certification.")
 		return 0
 	}
-	// Validate the whole batch before writing any output, including outputs
-	// that would replace another job's source rather than their own source.
+	// Plan all output paths before writing, including collisions with later
+	// inputs. Codec eligibility is checked by Convert for each job, not here.
 	if streamIndex < -1 || (streamIndex >= 0 && flags.NArg() != 1) {
 		fmt.Fprintln(errOut, "--stream requires a nonnegative index and exactly one input")
 		return 2

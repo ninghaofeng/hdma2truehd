@@ -34,6 +34,8 @@
           <label><input id="truehd" type="checkbox" checked> TrueHD <small data-i18n="lossless"></small></label>
           <label><input id="eac3" type="checkbox" checked> E-AC-3 <small data-i18n="lossy"></small></label>
         </fieldset>
+        <!-- Presets are kb/s; 0 delegates to audio's defaults. Eligibility and
+             rate limits are enforced again by the backend, not by this list. -->
         <label><span data-i18n="bitrate51"></span>
           <select id="bitrate51">
             <option value="0" data-i18n="auto51"></option>

@@ -35,6 +35,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, .drop:focus-vis
 .file-path { color: #7a879d; font-size: 11px; overflow-wrap: anywhere; margin: 5px 0 10px; }
 .track { display: flex; gap: 10px; align-items: flex-start; padding: 12px; margin: 7px 0; background: #f7f9fc; border-radius: 8px; }
 .track input { margin-top: 3px; }
+/* Permit long titles/paths to wrap instead of imposing a flex item's min-content width. */
 .track-details { flex: 1; min-width: 0; }
 .track-title { font-weight: 600; overflow-wrap: anywhere; }
 .track-meta { font-size: 12px; line-height: 1.8; margin-top: 4px; color: #65728a; }

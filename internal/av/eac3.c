@@ -203,6 +203,8 @@ static int encode_block(HDMAEAC3 *op)
             ret = AVERROR(ENOMEM);
             goto end;
         }
+        /* Unlike the general TrueHD drain loop, this paired-stream protocol
+         * requires exactly one immediately available packet for each block. */
         if ((ret = avcodec_receive_packet(ctx, packets[stream])) < 0)
             goto end;
         /* Both encoders must emit the same source interval with the same

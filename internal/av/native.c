@@ -181,6 +181,8 @@ int hdma_probe_tracks(const char *path, uintptr_t handle, HDMATrack **tracks,
         ret = AVERROR(ENOMEM);
         goto end;
     }
+    /* Inventory is not a decoder-support allowlist: unsupported audio tracks
+     * must retain their real indices so the UI can explain why they are disabled. */
     for (unsigned i = 0; i < op.input->nb_streams; i++) {
         AVStream *stream = op.input->streams[i];
         if (stream->codecpar->codec_type != AVMEDIA_TYPE_AUDIO)
@@ -193,6 +195,8 @@ int hdma_probe_tracks(const char *path, uintptr_t handle, HDMATrack **tracks,
         snprintf(track->language, sizeof(track->language), "%s", language ? language->value : "");
         snprintf(track->title, sizeof(track->title), "%s", title ? title->value : "");
         track->is_default = !!(stream->disposition & AV_DISPOSITION_DEFAULT);
+        /* This fallback is for display only. Verification counts decoded PCM
+         * rather than trusting an estimated container or stream duration. */
         track->duration_us = stream->duration != AV_NOPTS_VALUE ?
             av_rescale_q(stream->duration, stream->time_base, AV_TIME_BASE_Q) :
             op.input->duration != AV_NOPTS_VALUE ? op.input->duration : 0;
@@ -322,6 +326,8 @@ static int encode_fifo(Operation *op, int final)
         frame->nb_samples = FFMIN(available, op->encoder->frame_size);
         frame->sample_rate = op->rate;
         frame->format = op->encoder->sample_fmt;
+        /* Encoder timestamps count PCM samples; container timestamps are not
+         * copied into the raw elementary stream. */
         frame->pts = op->pts;
         op->pts += frame->nb_samples;
         ret = av_channel_layout_copy(&frame->ch_layout, &op->layout);
@@ -479,6 +485,8 @@ int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
             ret = AVERROR_EXIT;
             goto end;
         }
+        /* Corruption flags on unrelated tracks must not reject the selected
+         * audio. Container read errors still fail the operation below. */
         if (packet->stream_index == expected->index && (packet->flags & AV_PKT_FLAG_CORRUPT)) {
             ret = AVERROR_INVALIDDATA;
             goto end;

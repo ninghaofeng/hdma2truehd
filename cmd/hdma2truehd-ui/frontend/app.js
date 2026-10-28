@@ -48,10 +48,14 @@ let language = localStorage.getItem("hdma-language") === "en" ? "en" : "zh";
 let inputs = [];
 const selected = new Set();
 let state = {revision: 0, running: false, jobs: []};
+// busy covers an outstanding dialog/probe/Start RPC; running belongs to the
+// backend queue and remains authoritative after those promises resolve.
 let busy = false;
 let cancelling = false;
 let backend = null;
 const t = (key) => translations[language][key];
+// Tuple serialization avoids delimiter collisions with arbitrary file paths,
+// including Windows drive letters. The index remains the container's index.
 const keyFor = (path, index) => JSON.stringify([path, index]);
 const filename = (path) => path.split(/[\\/]/).pop();
 
@@ -117,6 +121,8 @@ function renderState() {
   $("cancel").textContent = t(cancelling ? "cancelling" : "cancel");
   $("output").placeholder = t("sameDir");
   $("activity").textContent = t(busy ? "busy" : state.running ? "working" : "idle");
+  // Failed/cancelled jobs also finish. This is queue completion, not a measured
+  // encoding percentage or an assertion that every completed output succeeded.
   const finished = state.jobs.filter((job) => !["pending", "running"].includes(job.status)).length;
   $("summary").textContent = `${selected.size} ${t("selected")} · ${finished}/${state.jobs.length} ${t("total")} ${t("complete")}`;
   $("progress").max = Math.max(1, state.jobs.length);
@@ -196,6 +202,8 @@ $("start").addEventListener("click", async () => {
   renderInputs();
   renderState();
   try {
+    // Keep zero as "automatic" and send kb/s, not bits/s. The backend resolves
+    // and validates each track's layout-specific rate during queue preflight.
     acceptState(await backend.Start({tracks, truehd: $("truehd").checked, eac3: $("eac3").checked,
       bitrate51: $("eac3").checked ? Number($("bitrate51").value) : 0,
       bitrate71: $("eac3").checked ? Number($("bitrate71").value) : 0,
@@ -203,6 +211,8 @@ $("start").addEventListener("click", async () => {
   } catch (error) { showError(error); }
   finally { busy = false; renderInputs(); renderState(); }
 });
+// Cancel only acknowledges the request; keep controls locked until a terminal
+// backend snapshot confirms that native conversion and cleanup have unwound.
 $("cancel").addEventListener("click", async () => {
   cancelling = true;
   renderState();
@@ -213,7 +223,11 @@ $("cancel").addEventListener("click", async () => {
 applyLanguage();
 if (window.go?.main?.App && window.runtime) {
   backend = window.go.main.App;
+  // Subscribe before fetching State so a queue change cannot fall into a
+  // setup gap. Revision checks reconcile an event that overtakes the RPC.
   window.runtime.EventsOn("queue", acceptState);
+  // Native paths let the backend read large MKVs in place, rather than upload
+  // browser File blobs or copy the movie into frontend memory.
   window.runtime.OnFileDrop((_x, _y, paths) => addFiles(paths), false);
   backend.State().then(acceptState).catch(showError);
   renderState();

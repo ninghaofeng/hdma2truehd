@@ -17,6 +17,8 @@ func TestMKVSelectedTracks(t *testing.T) {
 		t.Skip("set HDMA_TEST_DTS_51 and HDMA_TEST_DECODER")
 	}
 	movie := filepath.Join(t.TempDir(), "two-tracks.mkv")
+	// Put video first and unsupported AAC before DTS: audio ordinal 1 must
+	// select container index 2, without requiring the other tracks to decode.
 	command := exec.CommandContext(t.Context(), encoder, "-v", "error", "-i", source,
 		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=1",
 		"-f", "lavfi", "-i", "color=c=black:s=16x16:r=1:d=1",

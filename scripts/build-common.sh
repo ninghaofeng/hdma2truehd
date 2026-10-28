@@ -75,6 +75,7 @@ case "$build_target" in
     ui) apps=(hdma2truehd-ui) ;;
     *) printf 'Invalid build target: %s (choose both, cli or ui).\n' "$build_target" >&2; exit 2 ;;
 esac
+# Reject contradictory modes before tool installation or filesystem cleanup.
 if [[ "$clean" == true && "$binary_only" == true ]]; then
     printf '%s\n' '--clean is for full releases; --binary-only already replaces the executable without removing its output directory.' >&2
     exit 2
@@ -87,8 +88,6 @@ fi
 case "$platform" in
     macos)
         if [[ "$install_deps" == true ]]; then
-            # Installation is opt-in. Do not upgrade the whole MSYS2 system or install
-            # Go here; keep pacman's confirmation and recheck actual tools afterwards.
             printf '%s\n' '--install-deps is only supported for Windows MSYS2 UCRT64 builds.' >&2
             exit 2
         fi
@@ -113,6 +112,8 @@ case "$platform" in
         ;;
 esac
 if [[ "$install_deps" == true ]]; then
+    # Installation is opt-in. Keep pacman's confirmation, avoid a system
+    # upgrade, and recheck tools afterwards; Go/MSYS2 themselves are external.
     if ! command -v pacman >/dev/null 2>&1; then
         printf 'MSYS2 pacman not found. Check -Msys2Root points to a complete MSYS2 installation.\n' >&2
         exit 1
@@ -231,6 +232,8 @@ if [[ "$reuse" == true || "$binary_only" == true ]]; then
     fi
     printf 'Reusing existing FFmpeg static libraries.\n'
 else
+    # Rebuild the backend before deleting an old release: a failed rebuild may
+    # discard the old backend, but must leave the published release available.
     if [[ "$clean_backend" == true ]]; then
         backend_root="$root/.backend"
         backend_source="$backend_root/ffmpeg-8.0.1"
@@ -280,6 +283,8 @@ if [[ "$build_target" != cli ]]; then
     go vet -tags desktop,production ./cmd/hdma2truehd-ui
 fi
 bash scripts/build-release.sh --target "$build_target" "$destination"
+# A GUI launch would block on an interactive desktop. Verify both native links
+# and dependency sets, but invoke doctor only on the command-line application.
 for app in "${apps[@]}"; do
     relink=relink
     if [[ "$build_target" == both && "$app" == hdma2truehd-ui ]]; then relink=relink-ui; fi

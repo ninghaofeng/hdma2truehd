@@ -282,6 +282,8 @@ func TestBuildArguments(t *testing.T) {
 	exists(t, root, "dist/hdma2truehd-ui-darwin-amd64/hdma2truehd", false)
 }
 
+// The stub insists that the old tree is gone before recreating archives.
+// This proves cleanup ordering, not native codec compilation or signal fidelity.
 func stubBackendRebuild(t *testing.T, root string) {
 	t.Helper()
 	t.Setenv("TEST_BACKEND_EXIT", "0")

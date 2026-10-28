@@ -15,6 +15,8 @@ if [[ -e "$source_dir" || -L "$source_dir" ]]; then
     exit 1
 fi
 
+# Backend cleanup preserves this cache. Reuse never bypasses the checksum
+# below; reject a corrupt archive rather than extracting or overwriting it.
 if [[ -e "$archive" || -L "$archive" ]]; then
     printf 'Reusing FFmpeg source archive: %s\n' "$archive"
 else

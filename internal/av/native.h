@@ -4,8 +4,9 @@
 #include <stdint.h>
 
 /* Shared metadata contract: bits is effective precision, layout names speaker
- * positions, and all text fields must be NUL-terminated. Native operations
- * revalidate this snapshot instead of trusting a stale probe result. */
+ * positions, and all text fields must be NUL-terminated. index identifies the
+ * global container stream. Native operations revalidate this format/identity
+ * snapshot, but do not claim that it fingerprints the file's contents. */
 typedef struct HDMAInfo {
     int index;
     int rate;
@@ -31,6 +32,8 @@ typedef struct HDMATrack {
 int hdma_probe_tracks(const char *path, uintptr_t handle, HDMATrack **tracks,
                       int *count, char *error);
 void hdma_tracks_free(HDMATrack *tracks);
+/* index == -1 preserves the one-stream input contract; nonnegative indices
+ * select that exact audio stream, regardless of default-track disposition. */
 int hdma_probe_stream(const char *path, int index, uintptr_t handle,
                       HDMAInfo *info, char *error);
 /* output == NULL selects PCM callbacks; otherwise encode to that private path.

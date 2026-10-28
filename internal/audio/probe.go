@@ -10,6 +10,8 @@ import (
 	"github.com/ninghaofeng/hdma2truehd/internal/av"
 )
 
+// Stream exposes codec-style JSON fields; Index is the global container stream
+// index, not a position within the audio-only list returned by ProbeTracks.
 type Stream struct {
 	Index         int    `json:"index"`
 	CodecType     string `json:"codec_type"`
@@ -71,6 +73,8 @@ func fromNative(path string, info av.Info) Info {
 	return Info{Path: path, Stream: stream, Rate: info.Rate, Bits: info.Bits}
 }
 
+// Track adds display metadata to a probe result. Duration is seconds and may be
+// a container-level estimate; it is never used to verify encoded sample counts.
 type Track struct {
 	Info     Info    `json:"info"`
 	Language string  `json:"language"`
@@ -79,6 +83,8 @@ type Track struct {
 	Duration float64 `json:"duration"`
 }
 
+// ProbeTracks inventories audio, including unsupported codecs. Conversion
+// eligibility is a separate policy so the UI can explain disabled selections.
 func (b Backend) ProbeTracks(ctx context.Context, path string) ([]Track, error) {
 	path, err := localFile(path)
 	if err != nil {
@@ -96,6 +102,8 @@ func (b Backend) ProbeTracks(ctx context.Context, path string) ([]Track, error) 
 	return tracks, nil
 }
 
+// ProbeStream selects exactly one global audio index without choosing a
+// replacement when that stream is absent or points to video/subtitles.
 func (b Backend) ProbeStream(ctx context.Context, path string, index int) (Info, error) {
 	path, err := localFile(path)
 	if err != nil {

@@ -21,6 +21,8 @@ type Backend interface {
 	Convert(context.Context, string, string, audio.Options) (audio.Result, error)
 }
 
+// Problem rules out all conversion; EAC3Problem only rules out the lossy path.
+// Keep both visible rather than hiding tracks or silently changing formats.
 type Track struct {
 	audio.Track
 	Problem     string `json:"problem"`
@@ -38,6 +40,8 @@ type Selection struct {
 	Index int    `json:"index"`
 }
 
+// Request is a preflight input, not a trusted copy of Inspect's metadata.
+// Bitrate51/71 are total kb/s for their layouts; zero delegates defaults to audio.
 type Request struct {
 	Tracks    []Selection `json:"tracks"`
 	TrueHD    bool        `json:"truehd"`
@@ -48,6 +52,8 @@ type Request struct {
 	Overwrite bool        `json:"overwrite"`
 }
 
+// A job represents one track/format output, so selecting both formats creates
+// two independently published jobs. Sample counts are always per channel.
 type Job struct {
 	Input          string `json:"input"`
 	Index          int    `json:"index"`
@@ -60,12 +66,16 @@ type Job struct {
 	DecodedSamples uint64 `json:"decodedSamples"`
 }
 
+// Revision orders snapshots across RPC responses and asynchronous queue events.
+// Consumers must discard older revisions, not assume delivery order is FIFO.
 type State struct {
 	Revision uint64 `json:"revision"`
 	Running  bool   `json:"running"`
 	Jobs     []Job  `json:"jobs"`
 }
 
+// mu protects queue state and run ownership. Native conversion runs without
+// this lock, allowing cancellation and state reads while C is processing audio.
 type Service struct {
 	backend Backend
 	emit    func(State)
@@ -88,6 +98,8 @@ func allowedPath(path string) error {
 	}
 }
 
+// Inspect retains per-file failures so one bad drop does not hide valid files.
+// Cancellation checked between files and path-resolution failures abort the call.
 func (s *Service) Inspect(ctx context.Context, paths []string) ([]Input, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("no input files")
@@ -135,6 +147,9 @@ func (s *Service) Inspect(ctx context.Context, paths []string) ([]Input, error) 
 }
 
 func pathKey(path string) (string, error) {
+	// Outputs may not exist yet, so resolve their parent when the leaf is absent.
+	// Case folding deliberately favors collision rejection on macOS/Windows;
+	// plan separately checks hard-link identity with os.SameFile.
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		path = resolved
 	} else if errors.Is(err, os.ErrNotExist) {
@@ -171,6 +186,8 @@ func (s *Service) plan(ctx context.Context, req Request) ([]Job, error) {
 	jobs := []Job{}
 	destinations := map[string]bool{}
 	sources := map[string]bool{}
+	// Collect every source first: an early output must not overwrite a later
+	// input in the batch, even when replacing existing outputs was authorized.
 	for _, track := range req.Tracks {
 		path, err := filepath.Abs(track.Path)
 		if err != nil {
@@ -186,6 +203,8 @@ func (s *Service) plan(ctx context.Context, req Request) ([]Job, error) {
 		if err := allowedPath(selected.Path); err != nil {
 			return nil, err
 		}
+		// Selection may outlive the displayed inspection. Reprobe by the global
+		// container index and reapply audio's policy before creating any jobs.
 		info, err := s.backend.ProbeStream(ctx, selected.Path, selected.Index)
 		if err != nil {
 			return nil, err
@@ -256,6 +275,8 @@ func (s *Service) plan(ctx context.Context, req Request) ([]Job, error) {
 
 func (s *Service) snapshotLocked() State {
 	state := s.state
+	// Returning the live slice would let serializers/readers race with run's
+	// updates. Jobs contain value fields, so copying the slice is sufficient.
 	state.Jobs = append([]Job{}, s.state.Jobs...)
 	return state
 }
@@ -294,12 +315,16 @@ func (s *Service) update(change func()) {
 	s.state.Revision++
 	state := s.snapshotLocked()
 	s.mu.Unlock()
+	// Emit outside the lock: callbacks may read State, and a slow webview must
+	// not block cancellation while holding the queue mutex.
 	if s.emit != nil {
 		s.emit(state)
 	}
 }
 
 func (s *Service) run(ctx context.Context, req Request, done chan struct{}) {
+	// LIFO defers publish the final state before releasing Shutdown's waiter.
+	// The active Convert call has already returned and cleaned its staging files.
 	defer close(done)
 	defer func() {
 		s.update(func() {
@@ -323,6 +348,8 @@ func (s *Service) run(ctx context.Context, req Request, done chan struct{}) {
 		result, err := s.backend.Convert(ctx, job.Input, job.Output, audio.Options{
 			StreamIndex: &index, EAC3Bitrate: job.Bitrate, Overwrite: req.Overwrite,
 		})
+		// Ordinary job failures do not roll back earlier outputs or abort later
+		// jobs. Cancellation stops the next iteration and cancels pending work.
 		s.update(func() {
 			j := &s.state.Jobs[i]
 			switch {
@@ -359,6 +386,7 @@ func (s *Service) Shutdown() {
 	}
 	done := s.done
 	s.mu.Unlock()
+	// The worker's final update needs mu; waiting while holding it deadlocks.
 	if done != nil {
 		<-done
 	}

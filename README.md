@@ -122,6 +122,12 @@ restart header、声道顺序和极短输入 flush。库版本在运行时检查
    [`patches/ffmpeg/README.md`](patches/ffmpeg/README.md)。
 6. [`tests/integration/`](tests/integration/)：原生 TrueHD 合成信号回环及可选真实
    DTS 样本测试。合成回环验证编码器，不代替真实 DTS 解码或硬件播放验收。
+7. [`cmd/hdma2truehd-ui/main.go`](cmd/hdma2truehd-ui/main.go)、
+   [`internal/gui/service.go`](internal/gui/service.go) 与
+   [`frontend/app.js`](cmd/hdma2truehd-ui/frontend/app.js)：桌面生命周期、批量预检和串行队列；
+   注释说明快照所有权、修订号排序、取消/关闭等待及按声道布局保存码率的约束。
+   [`tests/build/`](tests/build/) 使用隔离目录和模拟编译器验证构建/清理流程，
+   不将这些测试视作原生编译或音频保真的证明。
 
 E-AC-3 分支见 [`internal/audio/eac3.go`](internal/audio/eac3.go) 和
 [`internal/av/eac3.c`](internal/av/eac3.c)：独立/依赖子流同步编码、声道替换映射、
@@ -642,6 +648,13 @@ ownership and failure boundaries:
 6. [`tests/integration/`](tests/integration/): native TrueHD synthetic-signal
    round trips and optional real DTS fixture tests. Synthetic round trips test
    the encoder; they do not replace real DTS decoding or hardware playback tests.
+7. [`cmd/hdma2truehd-ui/main.go`](cmd/hdma2truehd-ui/main.go),
+   [`internal/gui/service.go`](internal/gui/service.go) and
+   [`frontend/app.js`](cmd/hdma2truehd-ui/frontend/app.js): desktop lifecycle,
+   batch preflight and serial queue. Comments explain snapshot ownership,
+   revision ordering, cancellation/shutdown waits and per-layout bitrate capture.
+   [`tests/build/`](tests/build/) uses isolated directories and stub compilers to
+   test build/cleanup orchestration, not native compilation or audio fidelity.
 
 The E-AC-3 branch in [`internal/audio/eac3.go`](internal/audio/eac3.go) and
 [`internal/av/eac3.c`](internal/av/eac3.c) handles synchronized independent/dependent

@@ -38,6 +38,8 @@ func (b fakeBackend) Convert(ctx context.Context, in, out string, options audio.
 
 func waitQueue(t *testing.T, s *Service) State {
 	t.Helper()
+	// Wait for the worker's done signal, not a sampled Running flag. The
+	// timeout detects deadlocks; it is not how the queue synchronizes cleanup.
 	done := make(chan struct{})
 	go func() {
 		s.mu.Lock()
@@ -57,6 +59,8 @@ func waitQueue(t *testing.T, s *Service) State {
 }
 
 func TestLayoutBitrates(t *testing.T) {
+	// Mixed layouts share a queue, not a bitrate. Zero stays automatic until
+	// the audio backend resolves it; TrueHD must always receive zero.
 	for _, rates := range [][2]int{{640, 1280}, {0, 0}, {0, 1280}, {640, 0}, {960, 1536}} {
 		dir := t.TempDir()
 		base := fakeBackend{}
@@ -176,6 +180,8 @@ func TestQueueContinuesAndValidates(t *testing.T) {
 }
 
 func TestCancellationAndShutdown(t *testing.T) {
+	// Handshake after Convert starts so cancellation must unwind active work,
+	// rather than passing only because the worker never entered the backend.
 	started := make(chan struct{})
 	backend := fakeBackend{convert: func(ctx context.Context, _ string, _ string, _ audio.Options) (audio.Result, error) {
 		close(started)

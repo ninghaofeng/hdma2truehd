@@ -32,6 +32,8 @@ func generate() throws {
     }
 
     var pngs: [Int: Data] = [:]
+    // Render each size from the vector source rather than scaling a cached
+    // small bitmap, preserving sharp strokes in Dock and taskbar variants.
     for size in [16, 24, 32, 48, 64, 128, 256, 512, 1024] {
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -52,6 +54,8 @@ func generate() throws {
     }
     try pngs[1024]!.write(to: assets.appendingPathComponent("app.png"), options: .atomic)
 
+    // iconutil uses the filename's point size/@2x suffix to distinguish retina
+    // representations, even when two entries share the same pixel dimensions.
     for size in [16, 32, 128, 256, 512] {
         try pngs[size]!.write(to: iconset.appendingPathComponent("icon_\(size)x\(size).png"))
         try pngs[size * 2]!.write(to: iconset.appendingPathComponent("icon_\(size)x\(size)@2x.png"))
@@ -69,6 +73,8 @@ func generate() throws {
     // sizes as well as 256px so Explorer and the taskbar need not upscale.
     let sizes = [16, 24, 32, 48, 64, 128, 256]
     var ico = Data([0, 0, 1, 0]) + word(UInt16(sizes.count))
+    // ICO directory offsets are absolute byte positions. Dimensions use one
+    // byte, where zero denotes 256px; word/dword serialize little-endian fields.
     var offset = 6 + sizes.count * 16
     for size in sizes {
         let data = pngs[size]!

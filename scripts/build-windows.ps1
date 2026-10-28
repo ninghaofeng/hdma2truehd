@@ -38,6 +38,8 @@ if ($ReuseBackend) {
     $buildArgs += '--reuse-backend'
 }
 if ($CleanBackend) {
+    # Keep backend deletion separate from release cleanup. The common script
+    # validates the fixed deletion path and rejects conflicting reuse modes.
     $buildArgs += '--clean-backend'
 }
 if ($Clean) {

@@ -130,6 +130,8 @@ for app in "${apps[@]}"; do
     tags=""
     relink=relink
     ldflags="-linkmode=external"
+    # Both Go mains produce names such as go.o. Separate capture directories
+    # prevent object collisions while sources/licenses remain shared.
     if [[ "$app" == hdma2truehd-ui ]]; then
         tags=desktop,production
         if [[ "$build_target" == both ]]; then relink=relink-ui; fi
@@ -155,6 +157,8 @@ if [[ "$build_target" != cli && "$os" == darwin ]]; then
     cp "$destination/hdma2truehd-ui" "$bundle/MacOS/"
 fi
 if [[ "$binary_only" == true ]]; then
+    # Local mode deliberately stops before source/license/relink packaging;
+    # these executables alone are not a redistributable LGPL release kit.
     printf '\nApplications built (%s): %s\nNo tests or release materials were generated.\n' "$build_target" "$destination"
     exit 0
 fi
