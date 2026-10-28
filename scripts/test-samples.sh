@@ -2,9 +2,10 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-binary="$root/bin/hdma2truehd"
+binary=""
+binary_name=hdma2truehd
 if [[ "${OS:-}" == Windows_NT ]]; then
-    binary="${binary}.exe"
+    binary_name="${binary_name}.exe"
 fi
 overwrite=false
 
@@ -25,7 +26,8 @@ while [[ $# -gt 0 ]]; do
         --help|-h)
             printf 'Usage: bash scripts/test-samples.sh [--binary PATH] [--overwrite]\n'
             printf 'Convert samples/*.dts and samples/*.dtshd to .thd with full PCM verification.\n'
-            printf 'Default executable: bin/hdma2truehd (.exe on Windows).\n'
+            printf 'Default: find one hdma2truehd executable in dist/ or its immediate release subdirectories (.exe on Windows).\n'
+            printf 'If multiple releases exist, specify --binary PATH.\n'
             printf 'Existing outputs are preserved unless --overwrite is specified.\n'
             exit 0
             ;;
@@ -35,6 +37,27 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+shopt -s nullglob
+if [[ -z "$binary" ]]; then
+    candidates=()
+    for candidate in "$root/dist/$binary_name" "$root"/dist/*/"$binary_name"; do
+        if [[ -f "$candidate" ]]; then
+            candidates+=("$candidate")
+        fi
+    done
+    if [[ ${#candidates[@]} -eq 0 ]]; then
+        printf 'No %s release executable found in %s/dist. Build a release first or specify --binary PATH.\n' "$binary_name" "$root" >&2
+        exit 1
+    fi
+    if [[ ${#candidates[@]} -gt 1 ]]; then
+        printf 'Multiple release executables found:\n' >&2
+        printf '  %s\n' "${candidates[@]}" >&2
+        printf 'Specify --binary PATH to select the release to test.\n' >&2
+        exit 1
+    fi
+    binary="${candidates[0]}"
+fi
 
 if [[ ! -f "$binary" || ! -x "$binary" ]]; then
     printf 'Executable not found or not executable: %s\nBuild the program first or specify --binary PATH.\n' "$binary" >&2
@@ -58,4 +81,5 @@ if [[ "$overwrite" == true ]]; then
     options+=(--overwrite)
 fi
 printf 'Converting %d sample(s) with full PCM verification.\n' "${#inputs[@]}"
+printf 'Using executable: %s\n' "$binary"
 exec "$binary" "${options[@]}" "${inputs[@]}"

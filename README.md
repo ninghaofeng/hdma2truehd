@@ -202,11 +202,10 @@ Blu-ray 上限是八声道 96 kHz、六声道 192 kHz。
 
 ### 用主程序批量转换本地样本
 
-将有权测试的 `.dts` / `.dtshd` 文件放入 `samples/`，然后运行：
+先按上文完成发布构建，将有权测试的 `.dts` / `.dtshd` 文件放入 `samples/`，然后运行：
 
 ```sh
-# macOS：已构建静态库时，编译当前主程序
-bash scripts/build-macos.sh --binary-only
+# macOS：自动查找 dist 中的发布程序
 bash scripts/test-samples.sh
 
 # 显式覆盖已有 .thd，重新转换并完整校验
@@ -219,8 +218,7 @@ bash scripts/test-samples.sh --binary ./dist/hdma2truehd-darwin-arm64/hdma2trueh
 Windows 在 PowerShell 中运行，无需通过 MSYS2 Bash 启动测试：
 
 ```powershell
-# 已构建静态库时，编译当前主程序
-.\scripts\build-windows.ps1 -BinaryOnly
+# 自动查找 dist 中的发布程序
 .\scripts\test-samples.ps1
 
 # 显式覆盖已有 .thd，重新转换并完整校验
@@ -230,7 +228,13 @@ Windows 在 PowerShell 中运行，无需通过 MSYS2 Bash 启动测试：
 .\scripts\test-samples.ps1 -Binary '.\dist\hdma2truehd-windows-amd64\hdma2truehd.exe'
 ```
 
-测试脚本默认调用 `bin/hdma2truehd`（PowerShell 脚本为 `bin/hdma2truehd.exe`），不自动构建。
+测试脚本默认在仓库 `dist/` 及其一级发布子目录中查找普通版主程序：
+Bash 为 `hdma2truehd`（Windows 下为 `.exe`），PowerShell 为 `hdma2truehd.exe`。
+只找到一个时打印所选路径并运行；找不到则提示先构建发布版本，
+找到多个则列出候选并要求通过 `--binary` / `-Binary` 显式选择，不自动选择最新版本。
+不会选择 `hdma2truehd-relinked`，不再默认查找 `bin/`，也不自动构建。
+如需测试仅编译主程序的结果，可显式指定 `--binary ./bin/hdma2truehd`
+或 `-Binary '.\bin\hdma2truehd.exe'`。
 扫描仓库 `samples/` 顶层的输入文件，扩展名不区分大小写，
 将同名 `.thd` 写回该目录，不处理已有 `.thd`，也不修改输入。
 默认保留完整 PCM 校验，不覆盖已有输出；任何转换失败均返回非零退出码。
