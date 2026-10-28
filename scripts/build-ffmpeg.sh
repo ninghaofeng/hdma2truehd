@@ -10,12 +10,16 @@ source_dir="$build/ffmpeg-8.0.1"
 
 # Never patch/reconfigure an existing tree: it may contain local changes or
 # archives built for a different platform. Reuse is handled by build-common.sh.
-if [[ -e "$source_dir" ]]; then
-    printf 'Refusing to modify existing source directory: %s\nUse a new build directory.\n' "$source_dir" >&2
+if [[ -e "$source_dir" || -L "$source_dir" ]]; then
+    printf 'Refusing to modify existing source directory: %s\nUse a new build directory, or the platform build entry point with --reuse-backend / --clean-backend (-ReuseBackend / -CleanBackend on Windows).\n' "$source_dir" >&2
     exit 1
 fi
 
-curl --fail --location --retry 2 https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz --output "$archive"
+if [[ -e "$archive" || -L "$archive" ]]; then
+    printf 'Reusing FFmpeg source archive: %s\n' "$archive"
+else
+    curl --fail --location --retry 2 https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz --output "$archive"
+fi
 # Verify the pinned upstream bytes before extracting or applying our patch.
 expected=05ee0b03119b45c0bdb4df654b96802e909e0a752f72e4fe3794f487229e5a41
 if command -v sha256sum >/dev/null 2>&1; then
@@ -24,7 +28,7 @@ else
     actual="$(shasum -a 256 "$archive")"
 fi
 if [[ "${actual%% *}" != "$expected" ]]; then
-    printf 'FFmpeg archive checksum mismatch; refusing to extract.\n' >&2
+    printf 'FFmpeg archive checksum mismatch; refusing to extract.\nRemove the corrupt archive and retry: %s\n' "$archive" >&2
     exit 1
 fi
 

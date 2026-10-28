@@ -11,6 +11,7 @@ reuse=false
 binary_only=false
 install_deps=false
 clean=false
+clean_backend=false
 destination=""
 build_target=both
 while [[ $# -gt 0 ]]; do
@@ -31,6 +32,10 @@ while [[ $# -gt 0 ]]; do
             clean=true
             shift
             ;;
+        --clean-backend)
+            clean_backend=true
+            shift
+            ;;
         --output-dir)
             if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
                 printf '%s\n' '--output-dir requires a directory.' >&2
@@ -48,12 +53,13 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --help|-h)
-            printf 'Usage: build-macos.sh [--target both|cli|ui] [--binary-only] [--reuse-backend] [--clean] [--output-dir DIR]\n'
-            printf 'Windows: build-windows.ps1 [-Target both|cli|ui] [-Msys2Root PATH] [-BinaryOnly] [-ReuseBackend] [-InstallDependencies] [-Clean] [-OutputDir DIR]\n'
+            printf 'Usage: build-macos.sh [--target both|cli|ui] [--binary-only] [--reuse-backend|--clean-backend] [--clean] [--output-dir DIR]\n'
+            printf 'Windows: build-windows.ps1 [-Target both|cli|ui] [-Msys2Root PATH] [-BinaryOnly] [-ReuseBackend|-CleanBackend] [-InstallDependencies] [-Clean] [-OutputDir DIR]\n'
             printf 'Default: build libraries, test and package CLI and UI together in dist/.\n'
             printf 'Binary-only: reuse existing static libraries and rebuild both applications in bin/ (no tests or release materials).\n'
             printf 'Windows --install-deps: install MSYS2 prerequisites with pacman --needed, then build (confirmation required).\n'
             printf 'Clean: remove only the selected release directory directly inside project dist/ before building; static libraries are preserved.\n'
+            printf 'Clean-backend: delete only .backend/ffmpeg-8.0.1/ (including local source changes) and rebuild; keep the source archive and other backups. Cannot combine with reuse-backend or binary-only.\n'
             exit 0
             ;;
         *)
@@ -71,6 +77,10 @@ case "$build_target" in
 esac
 if [[ "$clean" == true && "$binary_only" == true ]]; then
     printf '%s\n' '--clean is for full releases; --binary-only already replaces the executable without removing its output directory.' >&2
+    exit 2
+fi
+if [[ "$clean_backend" == true && ( "$reuse" == true || "$binary_only" == true ) ]]; then
+    printf '%s\n' '--clean-backend rebuilds FFmpeg and cannot be combined with --reuse-backend or --binary-only.' >&2
     exit 2
 fi
 
@@ -221,6 +231,26 @@ if [[ "$reuse" == true || "$binary_only" == true ]]; then
     fi
     printf 'Reusing existing FFmpeg static libraries.\n'
 else
+    if [[ "$clean_backend" == true ]]; then
+        backend_root="$root/.backend"
+        backend_source="$backend_root/ffmpeg-8.0.1"
+        # Never follow an aliased parent or source directory when deleting.
+        # Only this fixed, versioned tree is disposable; backups/cache remain.
+        for directory in "$backend_root" "$backend_source"; do
+            if [[ -L "$directory" || ( -e "$directory" && ! -d "$directory" ) ]]; then
+                printf 'Refusing to clean a symlink or non-directory backend path: %s\n' "$directory" >&2
+                exit 1
+            fi
+            if [[ -d "$directory" && "$(cd "$directory" && pwd -P)" != "$directory" ]]; then
+                printf 'Refusing to clean an aliased backend path: %s\n' "$directory" >&2
+                exit 1
+            fi
+        done
+        if [[ -d "$backend_source" ]]; then
+            printf 'Cleaning FFmpeg source and static libraries (local changes will be lost): %s\n' "$backend_source"
+            rm -r -- "$backend_source"
+        fi
+    fi
     bash scripts/build-ffmpeg.sh
 fi
 

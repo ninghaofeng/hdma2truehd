@@ -147,6 +147,13 @@ SHA-256 校验工具。FFmpeg 构建脚本只生成静态库，不编译命令�
 依赖和后端检查通过后才清理；后续构建若失败，被清理的旧发布结果不会恢复。
 `--clean` 不重建静态库，已有静态库时请搭配 `--reuse-backend`；
 日常 `--binary-only` 已覆盖主程序，无需且不能搭配 `--clean`。
+
+**清理并重建静态库：** 使用 `--clean-backend`（Windows 为 `-CleanBackend`），
+明确删除且仅删除 `.backend/ffmpeg-8.0.1/` 整个源码和编译目录，再重新解压、打补丁和编译。
+该目录中的本地修改会丢失；不跟随 `.backend/` 或源码目录的符号链接。
+下载归档和其他后端备份保留；已有归档重新校验 SHA-256，缺失时才下载。
+参数不能与复用库或日常模式组合；要同时清理旧发布目录，再加 `--clean` / `-Clean`。
+清理发生在工具、平台和输出路径检查之后；后续重建失败不会恢复已删除的后端。
 替换静态库后应使用 `go build -a` / `go test -a` 强制重新链接，避免 Go 缓存
 继续使用外部库的旧版本。
 
@@ -162,6 +169,7 @@ SHA-256 校验工具。FFmpeg 构建脚本只生成静态库，不编译命令�
 |---|---|---|---|
 | 完整发布（默认） | 无 | 无 | 同时构建 CLI/UI，共享源码和许可证材料，分别重新链接；CLI 执行自检 |
 | 复用库完整发布 | `--reuse-backend` | `-ReuseBackend` | 复用现有库，其余发布步骤不变 |
+| 重建静态库完整发布 | `--clean-backend` | `-CleanBackend` | 删除当前 FFmpeg 源码/编译目录后重建，再构建 CLI/UI；可加发布目录清理参数 |
 | 日常仅编译应用 | `--binary-only` | `-BinaryOnly` | 必须已有本机静态库；同时编译 CLI/UI 并检查动态依赖 |
 | 单独构建目标 | `--target cli` / `--target ui` | `-Target cli` / `-Target ui` | 只构建所选工具，可搭配完整发布或日常模式；默认 `both` |
 
@@ -184,6 +192,9 @@ bash scripts/build-macos.sh --reuse-backend --output-dir dist/macos-new
 
 # 清理默认发布目录后重建，不重新编译 FFmpeg 静态库
 bash scripts/build-macos.sh --reuse-backend --clean
+
+# 连同 FFmpeg 静态库一起从头重建（会丢失后端源码目录中的本地修改）
+bash scripts/build-macos.sh --clean-backend --clean
 
 # 日常开发：复用静态库，编译 CLI、UI 和 macOS .app 到 bin/
 bash scripts/build-macos.sh --binary-only
@@ -234,6 +245,9 @@ pacman -S --needed make diffutils patch curl tar xz mingw-w64-ucrt-x86_64-gcc mi
 
 # 清理默认发布目录后重建，不重新编译 FFmpeg 静态库
 .\scripts\build-windows.ps1 -ReuseBackend -Clean
+
+# 连同 FFmpeg 静态库一起从头重建（会丢失后端源码目录中的本地修改）
+.\scripts\build-windows.ps1 -CleanBackend -Clean
 
 # 日常开发：复用静态库，同时编译两个 EXE 到 bin\
 .\scripts\build-windows.ps1 -BinaryOnly
@@ -662,6 +676,17 @@ cleanup; a later build failure does not restore the removed release.
 when libraries already exist. `--binary-only` already replaces the executable
 and cannot be combined with `--clean`.
 
+**Clean and rebuild static libraries:** Pass `--clean-backend` (`-CleanBackend`
+on Windows) to explicitly remove only the entire `.backend/ffmpeg-8.0.1/`
+source/build directory, then extract, patch and compile it again.
+Local changes inside that directory are lost. Symlinked backend parents or
+source directories are rejected. The download archive and other backend backups
+are preserved; cached archives are SHA-256 checked, downloading only if missing.
+This option cannot be combined with library reuse or executable-only mode.
+Add `--clean` / `-Clean` to also replace an existing release directory.
+Tool, platform and output-path checks precede deletion; a later rebuild failure
+does not restore the removed backend.
+
 After replacing static libraries, use `go build -a` / `go test -a` to force
 relinking rather than reusing a cached result linked against old external
 archives.
@@ -680,6 +705,7 @@ libraries or executables:
 |---|---|---|---|
 | Full release (default) | None | None | Build CLI/UI together, sharing sources and notices; relink each and run CLI self-tests |
 | Full release with reused libraries | `--reuse-backend` | `-ReuseBackend` | Reuse libraries; keep all other release steps |
+| Full release with a fresh backend | `--clean-backend` | `-CleanBackend` | Remove the current FFmpeg source/build tree, rebuild libraries and CLI/UI; optionally clean the release too |
 | Local executable-only build | `--binary-only` | `-BinaryOnly` | Require existing native static libraries; build both applications and check dynamic dependencies |
 | Single target | `--target cli` / `--target ui` | `-Target cli` / `-Target ui` | Select one application in release or local mode; default is `both` |
 
@@ -704,6 +730,9 @@ bash scripts/build-macos.sh --reuse-backend --output-dir dist/macos-new
 
 # Clean and rebuild the default release without rebuilding FFmpeg
 bash scripts/build-macos.sh --reuse-backend --clean
+
+# Rebuild FFmpeg too (local changes in its source directory will be lost)
+bash scripts/build-macos.sh --clean-backend --clean
 
 # Local development: rebuild CLI, UI and macOS app bundle in bin/
 bash scripts/build-macos.sh --binary-only
@@ -758,6 +787,9 @@ Then run from the project directory in **PowerShell**:
 
 # Clean and rebuild the default release without rebuilding FFmpeg
 .\scripts\build-windows.ps1 -ReuseBackend -Clean
+
+# Rebuild FFmpeg too (local changes in its source directory will be lost)
+.\scripts\build-windows.ps1 -CleanBackend -Clean
 
 # Local development: rebuild both EXEs in bin\
 .\scripts\build-windows.ps1 -BinaryOnly

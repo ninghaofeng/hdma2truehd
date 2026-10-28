@@ -86,6 +86,7 @@ esac
 	write("tools/cc", "#!/usr/bin/env bash\necho 'fixture compiler'\n")
 	write("tools/uname", "#!/usr/bin/env bash\necho Darwin\n")
 	write("tools/otool", "#!/usr/bin/env bash\nprintf '%s:\\n\\t/usr/lib/libSystem.B.dylib\\n' \"$2\"\n")
+	write("tools/objdump", "#!/usr/bin/env bash\nprintf '\\tDLL Name: KERNEL32.dll\\n'\n")
 	write("tools/cygpath", "#!/usr/bin/env bash\nprintf '%s\\n' \"$2\"\n")
 	write("tools/windres", `#!/usr/bin/env bash
 set -e
@@ -271,9 +272,201 @@ func TestBuildArguments(t *testing.T) {
 		}
 	}
 	run(t, root, "build-common.sh", false, "macos", "--binary-only", "--clean")
+	run(t, root, "build-common.sh", false, "macos", "--clean-backend", "--reuse-backend")
+	run(t, root, "build-common.sh", false, "macos", "--clean-backend", "--binary-only")
+	exists(t, root, ".backend/ffmpeg-8.0.1/libavcodec/libavcodec.a", true)
 	exists(t, root, "dist", false)
 	exists(t, root, "bin", false)
 	run(t, root, "build-ui.sh", true)
 	exists(t, root, "dist/hdma2truehd-ui-darwin-amd64/hdma2truehd-ui", true)
 	exists(t, root, "dist/hdma2truehd-ui-darwin-amd64/hdma2truehd", false)
+}
+
+func stubBackendRebuild(t *testing.T, root string) {
+	t.Helper()
+	t.Setenv("TEST_BACKEND_EXIT", "0")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+test ! -e .backend/ffmpeg-8.0.1
+printf 'rebuild\n' >> backend.log
+if [[ "$TEST_BACKEND_EXIT" != 0 ]]; then exit "$TEST_BACKEND_EXIT"; fi
+for lib in avformat avcodec swresample avutil; do
+    mkdir -p ".backend/ffmpeg-8.0.1/lib$lib"
+    printf 'rebuilt' > ".backend/ffmpeg-8.0.1/lib$lib/lib$lib.a"
+done
+`
+	if err := os.WriteFile(filepath.Join(root, "scripts/build-ffmpeg.sh"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCleanBackend(t *testing.T) {
+	for _, platform := range []string{"macos", "windows"} {
+		t.Run(platform, func(t *testing.T) {
+			root := fixture(t)
+			stubBackendRebuild(t, root)
+			if platform == "windows" {
+				t.Setenv("OS", "Windows_NT")
+				t.Setenv("MSYSTEM", "UCRT64")
+				t.Setenv("TEST_GOOS", "windows")
+			}
+			run(t, root, "build-common.sh", true, platform, "--reuse-backend")
+			release := "dist/hdma2truehd-darwin-amd64"
+			suffix := ""
+			if platform == "windows" {
+				release = "dist/hdma2truehd-windows-amd64"
+				suffix = ".exe"
+			}
+			for _, name := range []string{
+				".backend/ffmpeg-8.0.1/local-changes",
+				".backend/ffmpeg-8.0.1-backup/keep",
+				"samples/keep", "dist/other-release/keep", release + "/stale",
+			} {
+				path := filepath.Join(root, name)
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// A conflicting output must be rejected before deleting the backend.
+			run(t, root, "build-common.sh", false, platform, "--clean-backend")
+			exists(t, root, ".backend/ffmpeg-8.0.1/local-changes", true)
+			exists(t, root, "backend.log", false)
+			run(t, root, "build-common.sh", true, platform, "--clean-backend", "--clean")
+			exists(t, root, ".backend/ffmpeg-8.0.1/local-changes", false)
+			exists(t, root, release+"/stale", false)
+			for _, name := range []string{".backend/ffmpeg-8.0.1-backup/keep", "samples/keep", "dist/other-release/keep"} {
+				exists(t, root, name, true)
+			}
+			archive, err := os.ReadFile(filepath.Join(root, ".backend/ffmpeg-8.0.1.tar.xz"))
+			if err != nil || string(archive) != "fixture" {
+				t.Fatalf("source archive changed: %q, %v", archive, err)
+			}
+			library, err := os.ReadFile(filepath.Join(root, ".backend/ffmpeg-8.0.1/libavcodec/libavcodec.a"))
+			if err != nil || string(library) != "rebuilt" {
+				t.Fatalf("backend was not rebuilt: %q, %v", library, err)
+			}
+			exists(t, root, release+"/hdma2truehd"+suffix, true)
+			exists(t, root, release+"/hdma2truehd-ui"+suffix, true)
+			exists(t, root, release+"/relink-ui/relink.sh", true)
+		})
+	}
+}
+
+func TestCleanBackendUnsafePaths(t *testing.T) {
+	for _, name := range []string{"parent-link", "source-link", "broken-link", "parent-file", "source-file"} {
+		t.Run(name, func(t *testing.T) {
+			root := fixture(t)
+			stubBackendRebuild(t, root)
+			path := filepath.Join(root, ".backend")
+			if !strings.HasPrefix(name, "parent") {
+				path = filepath.Join(path, "ffmpeg-8.0.1")
+			}
+			saved := filepath.Join(root, "preserved-backend")
+			if err := os.Rename(path, saved); err != nil {
+				t.Fatal(err)
+			}
+			if strings.HasSuffix(name, "file") {
+				if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				target := saved
+				if name == "broken-link" {
+					target = filepath.Join(root, "missing")
+				}
+				if err := os.Symlink(target, path); err != nil {
+					t.Skipf("symlink creation unavailable: %v", err)
+				}
+			}
+			run(t, root, "build-common.sh", false, "macos", "--clean-backend")
+			exists(t, root, "preserved-backend", true)
+			exists(t, root, "backend.log", false)
+			if _, err := os.Lstat(path); err != nil {
+				t.Fatalf("unsafe backend path was removed: %v", err)
+			}
+		})
+	}
+}
+
+func TestCleanBackendMissingOrFailed(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(map[bool]string{false: "missing", true: "rebuild-failed"}[fail], func(t *testing.T) {
+			root := fixture(t)
+			stubBackendRebuild(t, root)
+			if fail {
+				t.Setenv("TEST_BACKEND_EXIT", "17")
+				// The old release must survive a failed backend rebuild.
+				run(t, root, "build-common.sh", true, "macos", "--reuse-backend")
+			} else if err := os.Rename(filepath.Join(root, ".backend/ffmpeg-8.0.1"),
+				filepath.Join(root, ".backend/ffmpeg-8.0.1-backup")); err != nil {
+				t.Fatal(err)
+			}
+			run(t, root, "build-common.sh", !fail, "macos", "--clean-backend", "--clean")
+			exists(t, root, ".backend/ffmpeg-8.0.1", !fail)
+			exists(t, root, "dist/hdma2truehd-darwin-amd64/hdma2truehd", true)
+			exists(t, root, ".backend/ffmpeg-8.0.1.tar.xz", true)
+		})
+	}
+}
+
+func TestFFmpegArchiveReuse(t *testing.T) {
+	for _, mode := range []string{"cached", "missing", "corrupt"} {
+		t.Run(mode, func(t *testing.T) {
+			root := fixture(t)
+			backend := filepath.Join(root, ".backend")
+			if err := os.Rename(filepath.Join(backend, "ffmpeg-8.0.1"),
+				filepath.Join(backend, "ffmpeg-8.0.1-backup")); err != nil {
+				t.Fatal(err)
+			}
+			archive := filepath.Join(backend, "ffmpeg-8.0.1.tar.xz")
+			if mode == "missing" {
+				if err := os.Rename(archive, filepath.Join(backend, "saved-archive")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			hash := "05ee0b03119b45c0bdb4df654b96802e909e0a752f72e4fe3794f487229e5a41"
+			if mode == "corrupt" {
+				hash = "incorrect"
+			}
+			t.Setenv("TEST_ARCHIVE_HASH", hash)
+			for name, script := range map[string]string{
+				"sha256sum": `#!/usr/bin/env bash
+printf '%s  %s\n' "$TEST_ARCHIVE_HASH" "$1"
+`,
+				"curl": `#!/usr/bin/env bash
+set -euo pipefail
+printf 'download\n' >> "$FIXTURE_ROOT/download.log"
+while [[ "$1" != --output ]]; do shift; done
+printf 'downloaded' > "$2"
+`,
+				"tar": `#!/usr/bin/env bash
+printf 'extract\n' >> "$FIXTURE_ROOT/extract.log"
+exit 37
+`,
+			} {
+				if err := os.WriteFile(filepath.Join(root, "tools", name), []byte(script), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Stop at extraction: this tests download/hash ordering without
+			// needing network access or compiling another copy of FFmpeg.
+			output := run(t, root, "build-ffmpeg.sh", false, filepath.ToSlash(backend))
+			exists(t, root, "download.log", mode == "missing")
+			exists(t, root, "extract.log", mode != "corrupt")
+			if mode == "corrupt" && !strings.Contains(output, "checksum mismatch") {
+				t.Fatalf("corrupt cache was not explicitly rejected: %s", output)
+			}
+			data, err := os.ReadFile(archive)
+			want := "fixture"
+			if mode == "missing" {
+				want = "downloaded"
+			}
+			if err != nil || string(data) != want {
+				t.Fatalf("archive contents %q, want %q: %v", data, want, err)
+			}
+		})
+	}
 }

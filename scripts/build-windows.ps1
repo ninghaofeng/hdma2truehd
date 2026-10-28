@@ -5,6 +5,7 @@ param(
     [ValidateSet('both', 'cli', 'ui')]
     [string]$Target = 'both',
     [switch]$ReuseBackend,
+    [switch]$CleanBackend,
     [switch]$BinaryOnly,
     [switch]$InstallDependencies,
     [switch]$Clean
@@ -35,6 +36,9 @@ if ($InstallDependencies) {
 }
 if ($ReuseBackend) {
     $buildArgs += '--reuse-backend'
+}
+if ($CleanBackend) {
+    $buildArgs += '--clean-backend'
 }
 if ($Clean) {
     $buildArgs += '--clean'
