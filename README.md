@@ -8,8 +8,9 @@ PCM 校验均在进程内完成；运行时不启动 `ffmpeg` / `ffprobe`，也�
 不自动降混、重采样或降低有效精度。
 
 > **验证边界：** macOS 已通过 288 组原生库回环测试、取消/错误传播测试、
-> 无 PATH 的单文件自检以及 LGPL 对象文件重新链接测试。尚无真实 DTS-HD MA
-> 样本用于端到端验收；Windows 原生运行和硬件播放兼容性尚未在本地验证。
+> 无 PATH 的单文件自检以及 LGPL 对象文件重新链接测试。另已通过两份约 30 秒的
+> 真实 DTS-HD MA 样本（48 kHz，5.1(side)/16 bit、7.1/24 bit）端到端转换、
+> 完整 PCM 校验及外部 FFmpeg 解码比较；Windows 原生运行和硬件播放兼容性尚未在本地验证。
 > 这不是 Dolby 认证的编码器，也不保证 Blu-ray 合规。
 
 ## 架构
@@ -129,7 +130,7 @@ hdma2truehd convert --skip-verify -o "output.thd" "input.dts"
 | 采样率 | 44.1、48、88.2、96、176.4、192 kHz；不重采样 |
 | 输出 | 原始 TrueHD `.thd`，无 AC-3 伴随流 |
 | 编解码回环 | 三种布局 × 六种采样率 × 两种位深 × 八种长度，共 288 组 |
-| 真实 MA 验收 | 暂无样本，测试明确跳过，不计为通过 |
+| 真实 MA 验收 | macOS 本地两份约 30 秒样本通过：48 kHz，5.1(side)/16 bit、7.1/24 bit；完整 PCM 校验及外部 FFmpeg 解码比较一致 |
 
 矩阵描述的是实验性软件编解码能力，不是播放器、功放或 Blu-ray 支持声明。
 特别是 7.1 的 176.4/192 kHz 不应被当作 Blu-ray 兼容输出；Dolby 公布的
@@ -141,6 +142,31 @@ Blu-ray 上限是八声道 96 kHz、六声道 192 kHz。
 首版不提供 GUI、MKV 提取/封装、DTS:X 对象元数据保留、Atmos 生成或批量并行。
 
 ## 测试
+
+### 用主程序批量转换本地样本
+
+将有权测试的 `.dts` / `.dtshd` 文件放入 `samples/`，然后运行：
+
+```sh
+# 已构建静态库时，编译当前主程序
+go build -o bin/hdma2truehd ./cmd/hdma2truehd
+bash scripts/test-samples.sh
+
+# 显式覆盖已有 .thd，重新转换并完整校验
+bash scripts/test-samples.sh --overwrite
+
+# 也可以测试指定的发布程序
+bash scripts/test-samples.sh --binary ./dist/hdma2truehd-darwin-arm64/hdma2truehd
+```
+
+脚本默认调用 `bin/hdma2truehd`（Windows 下为 `.exe`），不自动构建。
+扫描仓库 `samples/` 顶层的输入文件，扩展名不区分大小写，
+将同名 `.thd` 写回该目录，不处理已有 `.thd`，也不修改输入。
+默认保留完整 PCM 校验，不覆盖已有输出；任何转换失败均返回非零退出码。
+可从任意工作目录运行脚本；`--binary` 的相对路径以当前工作目录为准。
+Windows 可在 MSYS2 UCRT64 Bash 中运行，先构建 `.exe` 或使用 `--binary` 指定发布程序。
+
+### 自动化测试
 
 先构建静态库，再运行；原生集成测试不再依赖 FFmpeg 命令或后端路径变量：
 
