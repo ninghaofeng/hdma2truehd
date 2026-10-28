@@ -117,6 +117,8 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 	}
 	result = Result{Input: source.Path, Output: output, Lossy: lossy}
 	if lossy && !options.SkipVerify {
+		// Retain the same publication gate, but never label lossy format/length
+		// validation as proof of the source/output PCM equality used below.
 		if err := validateEAC3(ctx, encoded, stats); err != nil {
 			return Result{}, err
 		}

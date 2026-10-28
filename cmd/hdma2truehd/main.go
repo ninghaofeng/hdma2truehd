@@ -205,6 +205,8 @@ func planJobs(inputs []string, output, outputDir, format string) ([]job, error) 
 	switch format {
 	case "truehd", "eac3":
 	case "both":
+		// Each format becomes an independent transaction. A successful TrueHD
+		// output is preserved even if the following E-AC-3 conversion fails.
 		formats = []string{"truehd", "eac3"}
 		if output != "" {
 			return nil, fmt.Errorf("-o cannot be combined with --format both; use --output-dir")

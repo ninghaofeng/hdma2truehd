@@ -25,6 +25,9 @@ int hdma_probe(const char *path, uintptr_t handle, HDMAInfo *info, char *error);
 int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
                  uintptr_t handle, char *error);
 
+/* Stateful lossy encoder: write accepts interleaved little-endian int32 PCM.
+ * bitrate is total bits/second; keep handle live until close, even on failure.
+ * finish returns source samples and padded decoded samples per channel. */
 typedef struct HDMAEAC3 HDMAEAC3;
 int hdma_eac3_open(const char *path, int channels, int bitrate,
                    uintptr_t handle, HDMAEAC3 **result, char *error);

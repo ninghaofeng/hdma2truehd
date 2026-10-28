@@ -14,6 +14,8 @@ import (
 func TestEAC3RoundTrip(t *testing.T) {
 	for _, channels := range []int{6, 8} {
 		for _, bits := range []int{16, 24} {
+			// Cover both sides of the delay and frame boundaries, including
+			// tiny streams whose source tail could disappear without flushing.
 			for _, count := range []int{1, 255, 256, 1535, 1536, 1537, 96000} {
 				t.Run(fmt.Sprintf("%dch/%dbit/%dsamples", channels, bits, count), func(t *testing.T) {
 					layout, bitrate := "5.1(side)", 960000
@@ -127,6 +129,8 @@ func TestEAC3Bitrates(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Use exact frame/sample counts, not a demuxer's estimated duration
+		// or floating-point rounding, to check the combined stream bitrate.
 		if uint64(len(data))*8*48000 != uint64(bitrate)*stats.Decoded {
 			t.Fatalf("bitrate mismatch for %d", bitrate)
 		}

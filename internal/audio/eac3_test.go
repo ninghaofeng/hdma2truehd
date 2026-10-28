@@ -39,10 +39,13 @@ func TestEAC3RejectsDamagedOutput(t *testing.T) {
 			changed := append([]byte(nil), data...)
 			switch mode {
 			case "missing access unit":
+				// At 1536 kb/s and 48 kHz, one paired 1536-sample unit is
+				// 6144 bytes. Removing it leaves valid framing but a short stream.
 				changed = changed[:len(changed)-6144]
 			case "partial dependent":
 				changed = changed[:len(changed)-1]
 			case "CRC":
+				// Leave framing intact so payload corruption exercises CRC checks.
 				changed[len(changed)-100] ^= 1
 			}
 			target := filepath.Join(t.TempDir(), "damaged.eac3")

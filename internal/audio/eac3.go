@@ -7,6 +7,9 @@ import (
 	"github.com/ninghaofeng/hdma2truehd/internal/av"
 )
 
+// eac3Bitrate resolves CLI kb/s to native bits/second without changing the
+// source format. Limits keep core/dependent encoders on six-block frames;
+// 32 kb/s steps also give integral byte budgets after the 7.1 split.
 func eac3Bitrate(info Info, kbps int) (int, error) {
 	if info.Rate != 48000 || (info.Stream.Layout != "5.1(side)" && info.Stream.Layout != "7.1") {
 		return 0, fmt.Errorf("E-AC-3 supports 48000 Hz with 5.1(side) or 7.1 only; no automatic resampling/remapping")
@@ -32,6 +35,8 @@ func matchingEAC3(source, output Info) error {
 	return nil
 }
 
+// Lossy PCM cannot match source hashes. Count full-width decoded bytes instead,
+// without keeping the whole decoded movie in memory.
 type pcmCounter uint64
 
 func (c *pcmCounter) Write(p []byte) (int, error) {
@@ -40,11 +45,16 @@ func (c *pcmCounter) Write(p []byte) (int, error) {
 }
 
 func validateEAC3(ctx context.Context, encoded Info, stats av.EAC3Stats) error {
+	// Raw E-AC-3 cannot signal gapless trimming: include the 256-sample MDCT
+	// tail and round up to a complete 1536-sample access unit. Even removing
+	// an otherwise valid whole access unit must fail this length check.
 	expected := (stats.Samples + 256 + 1535) / 1536 * 1536
 	if stats.Samples == 0 || stats.Decoded != expected {
 		return fmt.Errorf("E-AC-3 encoder length mismatch: source=%d decoded=%d expected=%d", stats.Samples, stats.Decoded, expected)
 	}
 	info := nativeInfo(encoded)
+	// This is a decoder representation, not a claim of 32 effective bits.
+	// Lossy samples need not retain the source's zero low-bit padding.
 	info.Bits = 32
 	var count pcmCounter
 	if err := av.Process(ctx, encoded.Path, "", info, &count); err != nil {

@@ -75,6 +75,8 @@ func (b Backend) SelfTest(ctx context.Context) (err error) {
 		if err := ComparePCM(original, decoded); err != nil {
 			return fmt.Errorf("%s self-test: %w", layout, err)
 		}
+		// Back-only 5.1 is valid for TrueHD but deliberately unsupported by
+		// E-AC-3; the self-test must not hide that difference by remapping.
 		if layout != "5.1" {
 			eac3Output := filepath.Join(dir, "output.eac3")
 			bitrate, err := eac3Bitrate(input, 0)

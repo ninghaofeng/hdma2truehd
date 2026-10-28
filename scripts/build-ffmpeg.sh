@@ -40,6 +40,7 @@ fi
 # network, shared libraries and programs keeps system packages from silently
 # changing runtime dependencies. PCM/WAV support exists for doctor and tests.
 # The version marker is checked by the Go bridge to reject a stock backend.
+# FFmpeg's ac3 parser also handles E-AC-3; it does not require an AC-3 encoder.
 ./configure \
     --disable-everything --disable-autodetect --disable-doc --disable-network \
     --disable-debug --disable-x86asm \

@@ -32,6 +32,8 @@ func (w eac3Writer) Write(p []byte) (int, error) {
 		return 0, fmt.Errorf("invalid E-AC-3 PCM block size")
 	}
 	var message [512]C.char
+	// C copies this borrowed PCM buffer into its float FIFO before returning;
+	// neither the encoder nor its later flush may retain the supplied pointer.
 	ret := C.hdma_eac3_write(w.op, (*C.uchar)(unsafe.Pointer(&p[0])), C.int(len(p)), &message[0])
 	if err := result(w.status, ret, &message[0]); err != nil {
 		return 0, err
@@ -42,6 +44,7 @@ func (w eac3Writer) Write(p []byte) (int, error) {
 // EncodeEAC3 keeps decoding in the existing strict native pipeline and forwards
 // normalized PCM synchronously to a separate lossy encoder. It never uses an
 // external executable. Each output is still staged/published by package audio.
+// bitrate is the total bits/second, unlike the CLI's kb/s option.
 func EncodeEAC3(ctx context.Context, path, output string, expected Info, bitrate int) (EAC3Stats, error) {
 	if err := Check(ctx); err != nil {
 		return EAC3Stats{}, err
@@ -55,6 +58,8 @@ func EncodeEAC3(ctx context.Context, path, output string, expected Info, bitrate
 	if strings.ContainsRune(output, 0) || output == "" {
 		return EAC3Stats{}, fmt.Errorf("invalid E-AC-3 output path")
 	}
+	// The decoder's Process call owns a separate handle. This one stays live
+	// through encoder finalization/close, including I/O cancellation callbacks.
 	status := &operation{ctx: ctx}
 	handle := cgo.NewHandle(status)
 	defer handle.Delete()

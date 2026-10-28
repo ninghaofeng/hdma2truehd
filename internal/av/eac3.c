@@ -13,12 +13,16 @@ extern int hdmaGoCancelled(uintptr_t handle);
 
 struct HDMAEAC3 {
     uintptr_t handle;
+    /* Slot 0 is the independent 5.1 core; slot 1 is the optional quad
+     * dependent stream carrying the four original 7.1 surround channels. */
     AVCodecContext *encoders[2];
     AVFormatContext *output;
     AVAudioFifo *fifo;
     AVChannelLayout layout;
     int streams;
     int channels;
+    /* Count complete access units separately from original PCM samples;
+     * synthetic delay/padding contributes only to the former. */
     int64_t frames;
     uint64_t samples;
 };
@@ -39,6 +43,8 @@ static int interrupted(void *opaque)
 
 void hdma_eac3_close(HDMAEAC3 *op)
 {
+    /* finish reports output flush/close errors. This cleanup also accepts
+     * partially initialized operations from any failed open step. */
     if (!op)
         return;
     for (int i = 0; i < 2; i++)
@@ -84,20 +90,28 @@ int hdma_eac3_open(const char *path, int channels, int bitrate,
         ctx->sample_rate = 48000;
         ctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
         ctx->time_base = (AVRational){1, 48000};
+        /* The CLI bitrate covers the whole presentation, not each stream.
+         * Split 7.1's budget 5:3 between the core and dependent surrounds. */
         ctx->bit_rate = channels == 6 ? bitrate : bitrate * (i ? 3 : 5) / 8;
         ret = av_channel_layout_from_string(&ctx->ch_layout, i ? "quad" : "5.1(side)");
         if (ret < 0)
             goto failed;
+        /* Quad is a carrier for custom surround positions, not an ordinary
+         * quad presentation; keep dependent channel coupling disabled. */
         if (i && ((ret = av_opt_set_int(ctx->priv_data, "dependent_71", 1, 0)) < 0 ||
                   (ret = av_opt_set_int(ctx->priv_data, "channel_coupling", 0, 0)) < 0))
             goto failed;
         if ((ret = avcodec_open2(ctx, codec, NULL)) < 0)
             goto failed;
+        /* Reject codec geometry changes rather than silently misaligning
+         * the two streams or invalidating the raw-output length contract. */
         if (ctx->frame_size != 1536 || ctx->initial_padding != 256) {
             ret = AVERROR_INVALIDDATA;
             goto failed;
         }
     }
+    /* DTS frame boundaries need not match E-AC-3's 1536-sample units.
+     * One shared FIFO keeps both encoders on identical source boundaries. */
     op->fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLTP, channels, 1536);
     if (!op->fifo) {
         ret = AVERROR(ENOMEM);
@@ -112,6 +126,8 @@ int hdma_eac3_open(const char *path, int channels, int bitrate,
         goto failed;
     }
     stream->time_base = (AVRational){1, 48000};
+    /* Copy codec parameters from the core, but describe the complete
+     * presentation's layout and bitrate in the muxer's stream metadata. */
     if ((ret = avcodec_parameters_from_context(stream->codecpar, op->encoders[0])) < 0 ||
         (ret = av_channel_layout_copy(&stream->codecpar->ch_layout, &op->layout)) < 0)
         goto failed;
@@ -189,6 +205,8 @@ static int encode_block(HDMAEAC3 *op)
         }
         if ((ret = avcodec_receive_packet(ctx, packets[stream])) < 0)
             goto end;
+        /* Both encoders must emit the same source interval with the same
+         * fixed MDCT delay before their packets can form one access unit. */
         if (packets[stream]->pts != op->frames * 1536 - 256 ||
             packets[stream]->duration != 1536) {
             ret = AVERROR_INVALIDDATA;
@@ -203,6 +221,8 @@ static int encode_block(HDMAEAC3 *op)
     int size = packets[0]->size + (op->streams == 2 ? packets[1]->size : 0);
     if ((ret = av_new_packet(combined, size)) < 0)
         goto end;
+    /* An access unit starts with the independent frame, immediately followed
+     * by its dependent frame. Submit them together to preserve that pairing. */
     memcpy(combined->data, packets[0]->data, packets[0]->size);
     if (op->streams == 2)
         memcpy(combined->data + packets[0]->size, packets[1]->data, packets[1]->size);
@@ -226,6 +246,9 @@ static int append(HDMAEAC3 *op, const unsigned char *pcm, int count)
     AVFrame *frame = new_frame(&op->layout, count);
     if (!frame)
         return AVERROR(ENOMEM);
+    /* Strict decoding supplies interleaved, left-aligned int32 samples even
+     * for 16/24-bit sources, so normalize by 2^31, not the effective depth.
+     * NULL requests synthetic silence for final delay/padding flushes. */
     for (int ch = 0; ch < op->channels; ch++) {
         float *plane = (float *)frame->extended_data[ch];
         for (int n = 0; n < count; n++)
@@ -264,6 +287,8 @@ int hdma_eac3_finish(HDMAEAC3 *op, uint64_t *samples, uint64_t *decoded, char *e
     int ret = op->samples ? append(op, NULL, 256) : AVERROR_INVALIDDATA;
     if (ret >= 0 && av_audio_fifo_size(op->fifo))
         ret = append(op, NULL, 1536 - av_audio_fifo_size(op->fifo));
+    /* All padded blocks were already received synchronously. An unexpected
+     * delayed packet here cannot be paired safely, so require immediate EOF. */
     for (int i = 0; ret >= 0 && i < op->streams; i++) {
         ret = avcodec_send_frame(op->encoders[i], NULL);
         if (ret >= 0) {

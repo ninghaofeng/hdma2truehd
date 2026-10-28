@@ -310,7 +310,8 @@ static int consume_frame(Operation *op, AVFrame *frame)
         goto end;
     }
     /* Check unused low bits before narrowing or hashing. A 32-bit container
-     * must not hide precision beyond the declared 16/24 effective bits. */
+     * must not hide precision beyond the declared 16/24 effective bits.
+     * Explicit full-width lossy validation has no zero-padding invariant. */
     for (int i = 0; i < count * channels; i++) {
         uint32_t mask = op->bits == 32 ? 0 : op->bits == 16 ? 0xffff : 0xff;
         if (((uint32_t *)pcm)[i] & mask) {
