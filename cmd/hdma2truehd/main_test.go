@@ -120,6 +120,33 @@ func TestVersionAndCopyright(t *testing.T) {
 	}
 }
 
+func TestStageProgress(t *testing.T) {
+	var out, diagnostics bytes.Buffer
+	forwarded := 0
+	code := processJobs(t.Context(), []job{{"source.dts", "out.thd"}},
+		audio.Options{Progress: func(audio.Progress) { forwarded++ }},
+		func(_ context.Context, _, output string, options audio.Options) (audio.Result, error) {
+			for _, p := range []audio.Progress{
+				{Stage: "encode"},
+				{Stage: "encode", Seconds: 1, Duration: 4, Fraction: .25},
+				{Stage: "encode", Seconds: 4, Duration: 4, Fraction: 1, Done: true},
+				{Stage: "verify_source"},
+				{Stage: "verify_output"},
+			} {
+				options.Progress(p)
+			}
+			return audio.Result{Output: output, Verified: true}, nil
+		}, &out, &diagnostics)
+	if code != 0 || forwarded != 5 {
+		t.Fatalf("code=%d forwarded=%d", code, forwarded)
+	}
+	for _, want := range []string{"Encoding complete", "Verifying source PCM", "Verifying output", "4.0s processed"} {
+		if !strings.Contains(diagnostics.String(), want) || strings.Contains(out.String(), want) {
+			t.Fatalf("missing/misdirected progress %q: stdout=%s stderr=%s", want, &out, &diagnostics)
+		}
+	}
+}
+
 func TestBatchProcessing(t *testing.T) {
 	// A file failure continues the batch, whereas cancellation stops it with
 	// the interrupt status. Explicitly unverified results must never say VERIFIED.

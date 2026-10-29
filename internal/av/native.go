@@ -20,6 +20,7 @@ import (
 	"io"
 	"runtime/cgo"
 	"strings"
+	"time"
 	"unsafe"
 )
 
@@ -35,9 +36,25 @@ type Info struct {
 // operation stays reachable through a cgo.Handle for the entire synchronous C
 // call. Only the integer handle crosses the boundary, never a stored Go pointer.
 type operation struct {
-	ctx context.Context
-	out io.Writer
-	err error
+	ctx          context.Context
+	out          io.Writer
+	err          error
+	lastProgress time.Time
+}
+
+//export hdmaGoProgress
+func hdmaGoProgress(handle C.uintptr_t, samples C.int64_t, rate C.int, duration C.int64_t, done C.int) {
+	op := cgo.Handle(handle).Value().(*operation)
+	report, _ := op.ctx.Value(progressKey{}).(func(Progress))
+	if report == nil {
+		return
+	}
+	now := time.Now()
+	if done == 0 && !op.lastProgress.IsZero() && now.Sub(op.lastProgress) < 150*time.Millisecond {
+		return
+	}
+	op.lastProgress = now
+	report(Progress{Samples: uint64(samples), Rate: int(rate), Duration: float64(duration) / 1e6, Done: done != 0})
 }
 
 //export hdmaGoCancelled

@@ -131,7 +131,11 @@ func (i Info) ValidateSource() error {
 	// without parsing objects or rendering the spatial extension.
 	if i.Stream.Codec != "dts" || (i.Stream.Profile != "DTS-HD MA" &&
 		i.Stream.Profile != "DTS-HD MA + DTS:X" && i.Stream.Profile != "DTS-HD MA + DTS:X IMAX") {
-		return fmt.Errorf("%s: expected confirmed DTS-HD MA (including DTS:X/IMAX compatible channels), got codec=%q profile=%q; DTS core/HRA are not lossless MA", i.Path, i.Stream.Codec, i.Stream.Profile)
+		code := "codec"
+		if i.Stream.Codec == "dts" {
+			code = "profile"
+		}
+		return &UnsupportedError{Code: code, Message: fmt.Sprintf("track %d: expected confirmed DTS-HD MA (including DTS:X/IMAX compatible channels), got codec=%q profile=%q; DTS core/HRA are not lossless MA", i.Stream.Index, i.Stream.Codec, i.Stream.Profile)}
 	}
 	return i.validateFormat()
 }
@@ -146,18 +150,18 @@ func (i Info) validateFormat() error {
 	case "7.1":
 		channels = 8
 	default:
-		return fmt.Errorf("%s: unsupported or unknown channel layout %q; no automatic remapping/downmix", i.Path, i.Stream.Layout)
+		return &UnsupportedError{Code: "layout", Message: fmt.Sprintf("unsupported or unknown channel layout %q; need 5.1(side), 5.1 or 7.1; no automatic remapping/downmix", i.Stream.Layout)}
 	}
 	if i.Stream.Channels != channels {
-		return fmt.Errorf("%s: layout %s disagrees with channel count %d", i.Path, i.Stream.Layout, i.Stream.Channels)
+		return &UnsupportedError{Code: "channels", Message: fmt.Sprintf("layout %s disagrees with channel count %d", i.Stream.Layout, i.Stream.Channels)}
 	}
 	switch i.Rate {
 	case 44100, 48000, 88200, 96000, 176400, 192000:
 	default:
-		return fmt.Errorf("%s: unsupported sample rate %d; resampling is disabled", i.Path, i.Rate)
+		return &UnsupportedError{Code: "rate", Message: fmt.Sprintf("unsupported sample rate %d; resampling is disabled", i.Rate)}
 	}
 	if i.Bits != 16 && i.Bits != 24 {
-		return fmt.Errorf("%s: unsupported or unknown effective bit depth %d (need 16 or 24)", i.Path, i.Bits)
+		return &UnsupportedError{Code: "bits", Message: fmt.Sprintf("unsupported or unknown effective bit depth %d (need 16 or 24)", i.Bits)}
 	}
 	return nil
 }

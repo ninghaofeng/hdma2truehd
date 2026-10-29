@@ -12,6 +12,8 @@
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
 
+extern void hdmaGoProgress(uintptr_t handle, int64_t samples, int rate, int64_t duration, int done);
+
 extern int hdmaGoCancelled(uintptr_t handle);
 extern int hdmaGoPCM(uintptr_t handle, unsigned char *data, int size);
 
@@ -35,6 +37,17 @@ typedef struct Operation {
     int64_t samples;
     const char *stage;
 } Operation;
+
+static void report_progress(Operation *op, int done)
+{
+    AVStream *stream = op->input->streams[op->stream_index];
+    int64_t duration = 0;
+    if (stream->duration != AV_NOPTS_VALUE && stream->duration > 0)
+        duration = av_rescale_q(stream->duration, stream->time_base, AV_TIME_BASE_Q);
+    else if (op->input->duration != AV_NOPTS_VALUE && op->input->duration > 0)
+        duration = op->input->duration;
+    hdmaGoProgress(op->handle, op->samples, op->rate, duration, done);
+}
 
 const char *hdma_version(void) { return av_version_info(); }
 
@@ -439,8 +452,10 @@ static int consume_frame(Operation *op, AVFrame *frame)
     op->stage = "encode TrueHD frame";
     ret = encode_fifo(op, 0);
 end:
-    if (ret >= 0)
+    if (ret >= 0) {
         op->samples += count;
+        report_progress(op, 0);
+    }
     av_frame_free(&planar);
     av_free(pcm);
     return ret;
@@ -531,6 +546,8 @@ int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
         ret = avio_closep(&op.output->pb);
     }
 end:
+    if (ret >= 0)
+        report_progress(&op, 1);
     if (ret < 0)
         fail(error, op.stage, ret);
     av_packet_free(&packet);

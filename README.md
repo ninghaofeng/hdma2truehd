@@ -64,14 +64,19 @@ macOS 使用 `.tar.gz` 保留执行权限，Windows 使用 `.zip`，
 - 批量选择或拖入 `.dts`、`.dtshd`、`.mkv`，直接读取本地文件，不上传或复制整部 MKV。
 - MKV 展示音轨索引、语言、标题、格式、声道和时长；手动勾选一条或多条音轨。
   非 DTS-HD MA 音轨也会显示，但不可转换；有损 DTS core / HRA 仍不在支持范围。
+  不兼容原因按界面语言显示，并随所选输出格式更新；仅 E-AC-3 不兼容时，
+  可取消 E-AC-3、保留 TrueHD。存在不兼容的已选音轨时不能开始转换。
 - TrueHD 与 E-AC-3 可同时勾选；桌面端默认勾选两种，CLI 默认仍仅 TrueHD。
   E-AC-3 的 5.1 / 7.1 码率可分别选择自动或预设值，混合队列按音轨布局使用对应设置；
   自动为 5.1 **960 kb/s**、7.1 **1536 kb/s**。
 - 可选输出目录，留空时与源文件同目录；MKV 输出使用 `电影名.track-索引.thd/.eac3`
   避免同一电影的不同音轨互相覆盖。覆盖已有文件需要显式勾选。
 - 串行队列、每项结果、错误提示、取消，以及可记住的中英文切换。
-  进度条按已结束任务计数，不伪造当前编码的时间百分比。关闭窗口会取消并等待清理；
-  已发布的输出保留。技术诊断保留后端原始英文消息。
+  总进度条按已结束任务计数；每个文件分别显示转码、源 PCM 校验和输出校验阶段，
+  以及已处理时长、阶段耗时和估计百分比。估计依据实际处理采样数与媒体时长；
+  时长未知时显示不定进度，阶段真正成功才显示完成。CLI 同样输出阶段进度到 stderr。
+  百分比不代替完整采样校验。关闭窗口会取消并等待清理，已发布的输出保留；
+  其他技术诊断仍保留后端原始消息。
 - 仅生成独立音频文件，不封装回 MKV、不解码视频或字幕，也不解析 DTS:X 对象。
 
 下文的平台构建入口默认同时生成 CLI 和 UI，并打包到同一发布目录。
@@ -614,6 +619,9 @@ kits. The workflow currently does not sign code or notarize macOS applications.
 - MKV inputs list container stream indices, languages, titles, formats, layouts
   and durations. Explicitly select one or more audio tracks. Unsupported tracks
   remain visible but disabled; lossy DTS core / HRA remain unsupported.
+  Reasons use the interface language and update with selected output formats.
+  If only E-AC-3 is incompatible, deselect it to retain TrueHD. Incompatible
+  selected tracks block conversion until the selection or formats are changed.
 - Select TrueHD, E-AC-3 or both. The desktop defaults to both; the CLI still
   defaults to TrueHD only. E-AC-3 has separate automatic/preset bitrate choices
   for 5.1 and 7.1; mixed queues use each track's layout-specific setting.
@@ -621,11 +629,15 @@ kits. The workflow currently does not sign code or notarize macOS applications.
 - Choose an output directory or leave it empty to use each source directory.
   MKV outputs use `movie.track-INDEX.thd/.eac3` to distinguish selected tracks.
   Existing outputs require explicit overwrite permission.
-- A serial queue provides per-job results, errors and cancellation. The progress
-  bar counts finished jobs, not an invented encoding-time percentage. Closing
-  the window cancels and waits for cleanup, preserving published outputs.
-  Chinese/English selection is remembered; technical diagnostics retain the
-  original English backend messages.
+- A serial queue provides per-job results, errors and cancellation. The queue
+  bar counts finished jobs; per-file progress shows encoding, source PCM
+  verification and output validation stages, processed duration, stage elapsed
+  time and estimated percentages based on actual samples and media duration.
+  Unknown duration uses indeterminate progress; stages complete only on success.
+  The CLI also reports stage progress on stderr. Estimates never replace full
+  sample verification. Closing the window cancels and waits for cleanup,
+  preserving published outputs. Chinese/English selection is remembered;
+  other technical diagnostics retain the original backend messages.
 - Outputs are separate audio files, not a remuxed MKV. No video/subtitle
   decoding or DTS:X object rendering is added.
 

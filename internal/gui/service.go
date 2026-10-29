@@ -25,8 +25,10 @@ type Backend interface {
 // Keep both visible rather than hiding tracks or silently changing formats.
 type Track struct {
 	audio.Track
-	Problem     string `json:"problem"`
-	EAC3Problem string `json:"eac3Problem"`
+	Problem         string `json:"problem"`
+	EAC3Problem     string `json:"eac3Problem"`
+	ProblemCode     string `json:"problemCode"`
+	EAC3ProblemCode string `json:"eac3ProblemCode"`
 }
 
 type Input struct {
@@ -55,15 +57,16 @@ type Request struct {
 // A job represents one track/format output, so selecting both formats creates
 // two independently published jobs. Sample counts are always per channel.
 type Job struct {
-	Input          string `json:"input"`
-	Index          int    `json:"index"`
-	Output         string `json:"output"`
-	Format         string `json:"format"`
-	Bitrate        int    `json:"bitrate"`
-	Status         string `json:"status"`
-	Error          string `json:"error"`
-	Samples        uint64 `json:"samples"`
-	DecodedSamples uint64 `json:"decodedSamples"`
+	Input          string         `json:"input"`
+	Index          int            `json:"index"`
+	Output         string         `json:"output"`
+	Format         string         `json:"format"`
+	Bitrate        int            `json:"bitrate"`
+	Status         string         `json:"status"`
+	Error          string         `json:"error"`
+	Samples        uint64         `json:"samples"`
+	DecodedSamples uint64         `json:"decodedSamples"`
+	Progress       audio.Progress `json:"progress"`
 }
 
 // Revision orders snapshots across RPC responses and asynchronous queue events.
@@ -135,8 +138,16 @@ func (s *Service) Inspect(ctx context.Context, paths []string) ([]Input, error) 
 				t := Track{Track: track}
 				if err := track.Info.ValidateSource(); err != nil {
 					t.Problem = err.Error()
+					var unsupported *audio.UnsupportedError
+					if errors.As(err, &unsupported) {
+						t.ProblemCode = unsupported.Code
+					}
 				} else if err := track.Info.ValidateEAC3(0); err != nil {
 					t.EAC3Problem = err.Error()
+					var unsupported *audio.UnsupportedError
+					if errors.As(err, &unsupported) {
+						t.EAC3ProblemCode = unsupported.Code
+					}
 				}
 				input.Tracks = append(input.Tracks, t)
 			}
@@ -347,6 +358,9 @@ func (s *Service) run(ctx context.Context, req Request, done chan struct{}) {
 		index := job.Index
 		result, err := s.backend.Convert(ctx, job.Input, job.Output, audio.Options{
 			StreamIndex: &index, EAC3Bitrate: job.Bitrate, Overwrite: req.Overwrite,
+			Progress: func(progress audio.Progress) {
+				s.update(func() { s.state.Jobs[i].Progress = progress })
+			},
 		})
 		// Ordinary job failures do not roll back earlier outputs or abort later
 		// jobs. Cancellation stops the next iteration and cancels pending work.

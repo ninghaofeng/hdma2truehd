@@ -12,6 +12,8 @@ import (
 )
 
 type Options struct {
+	// Progress runs synchronously on the conversion goroutine; keep it brief.
+	Progress  func(Progress)
 	Overwrite bool
 	// StreamIndex selects a container stream explicitly; nil retains the
 	// single-stream input contract instead of guessing an MKV audio track.
@@ -38,6 +40,8 @@ type Result struct {
 // Convert encodes to a private file, validates it and only then publishes it.
 // A codec or verification failure must not expose a partial final output.
 func (b Backend) Convert(ctx context.Context, input, output string, options Options) (result Result, err error) {
+	progress := reporter{report: options.Progress}
+	progress.stage(ctx, "probe")
 	if err := b.Check(ctx); err != nil {
 		return Result{}, err
 	}
@@ -102,15 +106,18 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 		}
 	}()
 	temp := filepath.Join(tempDir, "output"+extension)
+	stageContext := progress.stage(ctx, "encode")
 	var stats av.EAC3Stats
 	if lossy {
-		stats, err = av.EncodeEAC3(ctx, source.Path, temp, nativeInfo(source), bitrate)
+		stats, err = av.EncodeEAC3(stageContext, source.Path, temp, nativeInfo(source), bitrate)
 	} else {
-		err = b.Encode(ctx, source, temp)
+		err = b.Encode(stageContext, source, temp)
 	}
 	if err != nil {
 		return Result{}, fmt.Errorf("encode: %w", err)
 	}
+	progress.finish()
+	progress.stage(ctx, "check_output")
 	encoded, err := b.Probe(ctx, temp)
 	if err != nil {
 		return Result{}, err
@@ -127,30 +134,34 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 	if lossy && !options.SkipVerify {
 		// Retain the same publication gate, but never label lossy format/length
 		// validation as proof of the source/output PCM equality used below.
-		if err := validateEAC3(ctx, encoded, stats); err != nil {
+		if err := validateEAC3(progress.stage(ctx, "verify_output"), encoded, stats); err != nil {
 			return Result{}, err
 		}
+		progress.finish()
 		result.Validated, result.Samples, result.DecodedSamples = true, stats.Samples, stats.Decoded
 	} else if !options.SkipVerify {
 		// Metadata alone cannot detect truncation, changed low bits or channel
 		// swaps. Decode both complete streams before committing the output.
-		originalPCM, err := b.Digest(ctx, source)
+		originalPCM, err := b.Digest(progress.stage(ctx, "verify_source"), source)
 		if err != nil {
 			return Result{}, err
 		}
-		outputPCM, err := b.Digest(ctx, encoded)
+		progress.finish()
+		outputPCM, err := b.Digest(progress.stage(ctx, "verify_output"), encoded)
 		if err != nil {
 			return Result{}, err
 		}
 		if err := ComparePCM(originalPCM, outputPCM); err != nil {
 			return Result{}, err
 		}
+		progress.finish()
 		result.Verified = true
 		result.Samples = originalPCM.Samples
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
+	progress.stage(ctx, "publish")
 	// Flush file contents before making the final name visible. This does not
 	// promise directory-entry durability across a sudden power failure.
 	file, err := os.OpenFile(temp, os.O_RDWR, 0)
@@ -172,5 +183,6 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 	} else if err := os.Link(temp, output); err != nil {
 		return Result{}, fmt.Errorf("publish without overwriting (requires hard-link support): %w", err)
 	}
+	progress.finish()
 	return result, nil
 }

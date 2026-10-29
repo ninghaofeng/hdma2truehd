@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/ninghaofeng/hdma2truehd/internal/audio"
 	"github.com/ninghaofeng/hdma2truehd/internal/buildinfo"
@@ -190,7 +191,32 @@ func processJobs(ctx context.Context, jobs []job, options audio.Options,
 			break
 		}
 		fmt.Fprintf(errOut, "[%d/%d] %s -> %s (encode%s)\n", i+1, len(jobs), job.input, job.output, verificationLabel(options.SkipVerify, strings.EqualFold(filepath.Ext(job.output), ".eac3")))
-		result, err := convert(ctx, job.input, job.output, options)
+		jobOptions := options
+		var lastProgress time.Time
+		var lastStage string
+		jobOptions.Progress = func(p audio.Progress) {
+			if options.Progress != nil {
+				options.Progress(p)
+			}
+			if p.Stage == lastStage && !p.Done && time.Since(lastProgress) < time.Second {
+				return
+			}
+			lastProgress, lastStage = time.Now(), p.Stage
+			label := map[string]string{"probe": "Reading audio track", "encode": "Encoding",
+				"check_output": "Checking output format", "verify_source": "Verifying source PCM",
+				"verify_output": "Verifying output", "publish": "Saving output"}[p.Stage]
+			if label == "" {
+				label = p.Stage
+			}
+			status := ""
+			if p.Done {
+				status = " complete"
+			} else if p.Duration > 0 {
+				status = fmt.Sprintf(" ~%.1f%%", p.Fraction*100)
+			}
+			fmt.Fprintf(errOut, "  %s%s | %.1fs processed | %.1fs elapsed\n", label, status, p.Seconds, p.Elapsed)
+		}
+		result, err := convert(ctx, job.input, job.output, jobOptions)
 		if err != nil {
 			failed++
 			fmt.Fprintf(errOut, "FAILED: %s: %v\n", job.input, err)

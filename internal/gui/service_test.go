@@ -121,6 +121,7 @@ func TestPlanning(t *testing.T) {
 	if err != nil || len(jobs) != 4 {
 		t.Fatalf("%+v %v", jobs, err)
 	}
+
 	if !strings.HasSuffix(jobs[0].Output, "movie.track-2.thd") || !strings.HasSuffix(jobs[3].Output, "movie.track-4.eac3") {
 		t.Fatalf("%+v", jobs)
 	}
@@ -146,6 +147,34 @@ func TestPlanning(t *testing.T) {
 	request.Overwrite = true
 	if _, err := s.plan(t.Context(), request); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestProgressSnapshots(t *testing.T) {
+	dir := t.TempDir()
+	var snapshots []State
+	s := New(fakeBackend{convert: func(_ context.Context, _, output string, options audio.Options) (audio.Result, error) {
+		if options.Progress == nil {
+			t.Error("no progress callback")
+			return audio.Result{}, errors.New("missing progress")
+		}
+		options.Progress(audio.Progress{Stage: "encode", Seconds: 12, Duration: 60, Fraction: .2})
+		options.Progress(audio.Progress{Stage: "verify_source", Seconds: 5, Duration: 60, Fraction: 5.0 / 60})
+		return audio.Result{Output: output, Verified: true, Samples: 17}, nil
+	}}, func(state State) { snapshots = append(snapshots, state) })
+	if _, err := s.Start(t.Context(), Request{Tracks: []Selection{{filepath.Join(dir, "source.dts"), 0}}, TrueHD: true}); err != nil {
+		t.Fatal(err)
+	}
+	waitQueue(t, s)
+	found := false
+	for _, snapshot := range snapshots {
+		job := snapshot.Jobs[0]
+		if job.Status == "running" && job.Progress.Stage == "encode" && job.Progress.Seconds == 12 && job.Progress.Fraction == .2 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("in-flight progress never emitted")
 	}
 }
 
@@ -213,12 +242,18 @@ func TestInspectUnsupportedTracks(t *testing.T) {
 	supported, _ := (fakeBackend{}).ProbeStream(t.Context(), filepath.Join(t.TempDir(), "movie.mkv"), 1)
 	unsupported := supported
 	unsupported.Stream.Codec = "aac"
-	s := New(fakeBackend{tracks: []audio.Track{{Info: supported, Language: "eng", Title: "Original"}, {Info: unsupported}}}, nil)
+	trueHDOnly := supported
+	trueHDOnly.Rate = 96000
+	s := New(fakeBackend{tracks: []audio.Track{{Info: supported, Language: "eng", Title: "Original"}, {Info: unsupported}, {Info: trueHDOnly}}}, nil)
 	inputs, err := s.Inspect(t.Context(), []string{supported.Path, supported.Path, filepath.Join(t.TempDir(), "wrong.txt")})
 	if err != nil || len(inputs) != 2 {
 		t.Fatalf("%+v %v", inputs, err)
 	}
-	if len(inputs[0].Tracks) != 2 || inputs[0].Tracks[0].Problem != "" || inputs[0].Tracks[1].Problem == "" || inputs[1].Error == "" {
+	if len(inputs[0].Tracks) != 3 || inputs[0].Tracks[0].Problem != "" || inputs[0].Tracks[1].Problem == "" || inputs[1].Error == "" {
 		t.Fatalf("%+v", inputs)
+	}
+	if inputs[0].Tracks[1].ProblemCode != "codec" || inputs[0].Tracks[2].ProblemCode != "" ||
+		inputs[0].Tracks[2].EAC3ProblemCode != "eac3_format" {
+		t.Fatalf("incorrect format-specific rejection codes: %+v", inputs[0].Tracks)
 	}
 }

@@ -13,7 +13,10 @@ const translations = {
     overwrite: "允许覆盖已有输出（默认不覆盖）",
     notice: "DTS:X 仅转换兼容声道，不渲染对象。TrueHD 校验完整 PCM；E-AC-3 校验完整解码与长度，并保留 256 采样编码延迟和帧补零。两种输出独立发布，不封装回 MKV。",
     queue: "转换队列", start: "开始转换", cancel: "取消转换", cancelling: "正在取消…",
-    busy: "正在读取音轨信息…", idle: "就绪", working: "正在编码与完整校验；进度条按已完成任务计数。",
+    busy: "正在读取音轨信息…", idle: "就绪", working: "正在处理；下方显示当前文件的编码与校验进度。",
+    probe: "读取音轨信息", encode: "转码", check_output: "检查输出格式", verify_source: "校验：解码源音轨 PCM",
+    verify_output: "校验：解码并检查输出", publish: "保存输出", processed: "已处理", elapsed: "已耗时", stageDone: "阶段完成",
+    estimated: "估计", unknownDuration: "总时长未知", incompatible: "所选输出格式不兼容，请调整格式或取消选择标记的音轨。",
     verified: "无损验证通过", validated: "有损校验通过", pending: "等待中", running: "编码 / 校验中",
     failed: "失败", cancelled: "已取消", selected: "已选音轨", total: "任务", complete: "已结束",
     track: "音轨", default: "默认", unsupported: "不可转换", eac3Unavailable: "无法输出 E-AC-3",
@@ -33,7 +36,10 @@ const translations = {
     overwrite: "Allow replacing existing outputs (off by default)",
     notice: "DTS:X compatible channels only, no object rendering. TrueHD verifies complete PCM; E-AC-3 validates full decoding and length, retaining 256 samples of delay and frame padding. Outputs are published independently, not remuxed into MKV.",
     queue: "Conversion queue", start: "Start conversion", cancel: "Cancel", cancelling: "Cancelling…",
-    busy: "Reading audio tracks…", idle: "Ready", working: "Encoding and full validation; progress counts completed jobs.",
+    busy: "Reading audio tracks…", idle: "Ready", working: "Processing; current-file encoding and verification progress appears below.",
+    probe: "Reading audio track", encode: "Encoding", check_output: "Checking output format", verify_source: "Verification: decoding source PCM",
+    verify_output: "Verification: decoding and checking output", publish: "Saving output", processed: "processed", elapsed: "elapsed", stageDone: "stage complete",
+    estimated: "estimated", unknownDuration: "total duration unknown", incompatible: "Selected output formats are incompatible. Change formats or deselect marked tracks.",
     verified: "Lossless verified", validated: "Lossy validated", pending: "Pending", running: "Encoding / validating",
     failed: "Failed", cancelled: "Cancelled", selected: "selected tracks", total: "jobs", complete: "finished",
     track: "Track", default: "default", unsupported: "Cannot convert", eac3Unavailable: "E-AC-3 unavailable",
@@ -74,6 +80,45 @@ function showError(error) {
 
 function clearError() { $("error").hidden = true; $("error").textContent = ""; }
 
+function trackProblem(track) {
+  const info = track.info;
+  const stream = info.stream;
+  const code = track.problemCode;
+  const eac3 = $("eac3").checked && track.eac3Problem;
+  const reason = track.problem || (eac3 ? track.eac3Problem : "");
+  if (!reason) return "";
+  const kind = code || (eac3 ? track.eac3ProblemCode : "");
+  const actual = `${[stream.codec_name, stream.profile].filter(Boolean).join(" / ") || "?"} · ${stream.channel_layout || `${stream.channels} ch`} · ${info.sample_rate || "?"} Hz · ${info.effective_bits || "?"} bit`;
+  const messages = language === "zh" ? {
+    codec: "仅支持 DTS-HD MA 无损源音轨；当前编码不支持转换。",
+    profile: "当前为 DTS 有损核心、HRA 或未确认的 profile，不是已确认的 DTS-HD MA。",
+    layout: "仅支持 5.1(side)、5.1（后环绕）和标准 7.1；不自动重映射或降混。",
+    channels: "声道数量与布局信息不一致，无法安全转换。",
+    rate: "采样率不支持；支持 44.1/48/88.2/96/176.4/192 kHz，不自动重采样。",
+    bits: "有效位深未知或不支持；仅接受确认的 16/24 位音轨。",
+    eac3_format: "当前音轨可转 TrueHD，但 E-AC-3 仅支持 48 kHz 的 5.1(side)/7.1；请取消 E-AC-3 输出。"
+  } : {
+    codec: "Only lossless DTS-HD MA sources are supported; this codec cannot be converted.",
+    profile: "DTS core, HRA or an unconfirmed profile is not confirmed lossless DTS-HD MA.",
+    layout: "Only 5.1(side), rear 5.1 and standard 7.1 are supported; no automatic remapping/downmix.",
+    channels: "Channel count and speaker layout disagree; conversion is unsafe.",
+    rate: "Unsupported rate; use 44.1/48/88.2/96/176.4/192 kHz. No automatic resampling.",
+    bits: "Unknown or unsupported effective precision; confirmed 16/24-bit sources only.",
+    eac3_format: "TrueHD is available, but E-AC-3 requires 48 kHz 5.1(side)/7.1. Deselect E-AC-3."
+  };
+  return `${messages[kind] || reason} (${actual})`;
+}
+
+function incompatibleSelection() {
+  return inputs.some((input) => input.tracks.some((track) =>
+    selected.has(keyFor(input.path, track.info.stream.index)) && trackProblem(track)));
+}
+
+function clock(seconds) {
+  seconds = Math.max(0, Math.floor(seconds || 0));
+  return `${Math.floor(seconds / 3600) ? Math.floor(seconds / 3600) + ":" : ""}${String(Math.floor(seconds / 60) % 60).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 function renderInputs() {
   const fragment = document.createDocumentFragment();
   for (const input of inputs) {
@@ -88,10 +133,12 @@ function renderInputs() {
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = selected.has(id);
-      checkbox.disabled = !!track.problem || busy || state.running;
+      const problem = trackProblem(track);
+      // Keep selected incompatible tracks removable rather than trapping the selection.
+      checkbox.disabled = (!!problem && !checkbox.checked) || busy || state.running;
       checkbox.addEventListener("change", () => {
         if (checkbox.checked) selected.add(id); else selected.delete(id);
-        renderState();
+        renderInputs(); renderState();
       });
       const details = node("div", undefined, "track-details");
       const title = `${t("track")} ${stream.index} · ${stream.profile || stream.codec_name}${track.title ? " · " + track.title : ""}`;
@@ -100,8 +147,7 @@ function renderInputs() {
       details.append(node("div", [track.language, stream.channel_layout || `${stream.channels} ch`,
         info.sample_rate ? `${info.sample_rate} Hz` : "", info.effective_bits ? `${info.effective_bits} bit` : "",
         duration, track.default ? t("default") : ""].filter(Boolean).join(" · "), "track-meta"));
-      if (track.problem) details.append(node("p", `${t("unsupported")}: ${track.problem}`, "problem"));
-      else if (track.eac3Problem) details.append(node("p", `${t("eac3Unavailable")}: ${track.eac3Problem}`, "problem"));
+      if (problem) details.append(node("p", `${t("unsupported")}: ${problem}`, "problem"));
       label.append(checkbox, details);
       file.append(label);
     }
@@ -116,11 +162,12 @@ function renderState() {
   for (const id of ["add", "clear", "truehd", "eac3", "browse", "reset-output", "overwrite"]) $(id).disabled = locked;
   $("drop").setAttribute("aria-disabled", String(locked));
   for (const id of ["bitrate51", "bitrate71"]) $(id).disabled = locked || !$("eac3").checked;
-  $("start").disabled = locked || !backend || selected.size === 0 || (!$("truehd").checked && !$("eac3").checked);
+  $("start").disabled = locked || !backend || selected.size === 0 || incompatibleSelection() || (!$("truehd").checked && !$("eac3").checked);
   $("cancel").disabled = !state.running || cancelling;
   $("cancel").textContent = t(cancelling ? "cancelling" : "cancel");
   $("output").placeholder = t("sameDir");
   $("activity").textContent = t(busy ? "busy" : state.running ? "working" : "idle");
+  if (!locked && incompatibleSelection()) $("activity").textContent = t("incompatible");
   // Failed/cancelled jobs also finish. This is queue completion, not a measured
   // encoding percentage or an assertion that every completed output succeeded.
   const finished = state.jobs.filter((job) => !["pending", "running"].includes(job.status)).length;
@@ -133,6 +180,17 @@ function renderState() {
     const heading = node("div", undefined, "job-heading");
     heading.append(node("span", filename(job.output)), node("span", t(job.status), `status ${job.status}`));
     item.append(heading, node("div", job.output, "file-path"));
+    const p = job.progress;
+    if (p?.stage) {
+      const terminal = !["pending", "running"].includes(job.status);
+      const text = `${t(p.stage) || p.stage} · ${p.done ? t("stageDone") : p.duration > 0 ? `${t("estimated")} ${(p.fraction * 100).toFixed(1)}%` : t("unknownDuration")}`;
+      const bar = node("progress");
+      bar.max = 1;
+      if (p.duration > 0 || p.done) bar.value = p.fraction;
+      bar.setAttribute("aria-label", t(p.stage) || p.stage);
+      if (!terminal) item.append(bar);
+      item.append(node("div", `${text} · ${t("processed")} ${clock(p.seconds)}${p.duration > 0 ? " / " + clock(p.duration) : ""} · ${t("elapsed")} ${clock(p.elapsed)}`, "track-meta"));
+    }
     if (job.samples) item.append(node("div", `${job.samples} ${t("samples")}${job.decodedSamples ? ` · ${job.decodedSamples} ${t("decoded")}` : ""}`, "track-meta"));
     if (job.error) item.append(node("p", job.error, "problem"));
     fragment.append(item);
@@ -153,9 +211,10 @@ function applyLanguage() {
 function acceptState(next) {
   // Events may overtake the response to Start. Never redraw an older snapshot.
   if (next.revision < state.revision) return;
+  const wasRunning = state.running;
   state = next;
   if (!state.running) cancelling = false;
-  renderInputs();
+  if (wasRunning !== state.running) renderInputs();
   renderState();
 }
 
@@ -172,7 +231,7 @@ async function addFiles(paths) {
       inputs.push(input);
       // Raw DTS has no track ambiguity; MKV requires an explicit user choice.
       if (!/\.mkv$/i.test(input.path)) {
-        for (const track of input.tracks) if (!track.problem) selected.add(keyFor(input.path, track.info.stream.index));
+        for (const track of input.tracks) if (!trackProblem(track)) selected.add(keyFor(input.path, track.info.stream.index));
       }
     }
   } catch (error) { showError(error); }
@@ -186,8 +245,7 @@ $("drop").addEventListener("keydown", (event) => {
 });
 $("language").addEventListener("change", () => { language = $("language").value; localStorage.setItem("hdma-language", language); applyLanguage(); });
 $("clear").addEventListener("click", () => { inputs = []; selected.clear(); clearError(); renderInputs(); renderState(); });
-$("truehd").addEventListener("change", renderState);
-$("eac3").addEventListener("change", renderState);
+for (const id of ["truehd", "eac3"]) $(id).addEventListener("change", () => { renderInputs(); renderState(); });
 $("reset-output").addEventListener("click", () => { $("output").value = ""; });
 $("browse").addEventListener("click", async () => {
   if (!backend) return;
@@ -198,6 +256,7 @@ $("start").addEventListener("click", async () => {
   clearError();
   const tracks = [...selected].map((id) => { const [path, index] = JSON.parse(id); return {path, index}; });
   if (tracks.length === 0 || (!$("truehd").checked && !$("eac3").checked)) { showError(t("choose")); return; }
+  if (incompatibleSelection()) { showError(t("incompatible")); return; }
   busy = true;
   renderInputs();
   renderState();

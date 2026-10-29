@@ -12,7 +12,7 @@ import (
 // 32 kb/s steps also give integral byte budgets after the 7.1 split.
 func eac3Bitrate(info Info, kbps int) (int, error) {
 	if info.Rate != 48000 || (info.Stream.Layout != "5.1(side)" && info.Stream.Layout != "7.1") {
-		return 0, fmt.Errorf("E-AC-3 supports 48000 Hz with 5.1(side) or 7.1 only; no automatic resampling/remapping")
+		return 0, &UnsupportedError{Code: "eac3_format", Message: fmt.Sprintf("E-AC-3 supports 48000 Hz with 5.1(side) or 7.1 only; got %d Hz / %s; no automatic resampling/remapping", info.Rate, info.Stream.Layout)}
 	}
 	minimum, maximum, standard := 384, 1024, 960
 	if info.Stream.Layout == "7.1" {

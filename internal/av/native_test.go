@@ -115,3 +115,42 @@ func TestNativeConcurrent(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeProgress(t *testing.T) {
+	path, info := fixture(t)
+	for _, encode := range []bool{false, true} {
+		var events []Progress
+		ctx := WithProgress(t.Context(), func(p Progress) { events = append(events, p) })
+		output := ""
+		if encode {
+			output = filepath.Join(t.TempDir(), "out.thd")
+		}
+		if err := Process(ctx, path, output, info, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		if len(events) < 2 {
+			t.Fatalf("no in-flight progress before completion: %v", events)
+		}
+		var previous uint64
+		for i, p := range events {
+			if p.Samples < previous || p.Rate != 48000 || p.Duration <= 0 {
+				t.Fatalf("invalid progress: %+v", p)
+			}
+			if i < len(events)-1 && p.Done {
+				t.Fatal("premature completion")
+			}
+			previous = p.Samples
+		}
+		last := events[len(events)-1]
+		if !last.Done || last.Samples != 48001 {
+			t.Fatalf("wrong final samples: %+v", last)
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var completed bool
+	ctx = WithProgress(ctx, func(p Progress) { completed = completed || p.Done; cancel() })
+	if err := Process(ctx, path, "", info, io.Discard); !errors.Is(err, context.Canceled) || completed {
+		t.Fatalf("cancelled progress completed=%v err=%v", completed, err)
+	}
+}
