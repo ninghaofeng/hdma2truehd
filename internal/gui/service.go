@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/ninghaofeng/hdma2truehd/internal/audio"
+	"github.com/ninghaofeng/hdma2truehd/internal/batch"
 )
 
 type Backend interface {
@@ -45,13 +46,14 @@ type Selection struct {
 // Request is a preflight input, not a trusted copy of Inspect's metadata.
 // Bitrate51/71 are total kb/s for their layouts; zero delegates defaults to audio.
 type Request struct {
-	Tracks    []Selection `json:"tracks"`
-	TrueHD    bool        `json:"truehd"`
-	EAC3      bool        `json:"eac3"`
-	Bitrate51 int         `json:"bitrate51"`
-	Bitrate71 int         `json:"bitrate71"`
-	OutputDir string      `json:"outputDir"`
-	Overwrite bool        `json:"overwrite"`
+	Tracks      []Selection `json:"tracks"`
+	TrueHD      bool        `json:"truehd"`
+	EAC3        bool        `json:"eac3"`
+	Bitrate51   int         `json:"bitrate51"`
+	Bitrate71   int         `json:"bitrate71"`
+	OutputDir   string      `json:"outputDir"`
+	Overwrite   bool        `json:"overwrite"`
+	Concurrency int         `json:"concurrency"`
 }
 
 // A job represents one track/format output, so selecting both formats creates
@@ -306,6 +308,12 @@ func (s *Service) Start(ctx context.Context, req Request) (State, error) {
 	if s.state.Running {
 		return State{}, fmt.Errorf("a conversion is already running")
 	}
+	if req.Concurrency == 0 {
+		req.Concurrency = batch.DefaultConcurrency
+	}
+	if err := batch.ValidateConcurrency(req.Concurrency); err != nil {
+		return State{}, err
+	}
 	jobs, err := s.plan(ctx, req)
 	if err != nil {
 		return State{}, err
@@ -326,8 +334,8 @@ func (s *Service) update(change func()) {
 	s.state.Revision++
 	state := s.snapshotLocked()
 	s.mu.Unlock()
-	// Emit outside the lock: callbacks may read State, and a slow webview must
-	// not block cancellation while holding the queue mutex.
+	// Parallel workers may emit out of order. Consumers use Revision and must
+	// accept concurrent callbacks; keep the queue lock free for State/Cancel.
 	if s.emit != nil {
 		s.emit(state)
 	}
@@ -335,7 +343,7 @@ func (s *Service) update(change func()) {
 
 func (s *Service) run(ctx context.Context, req Request, done chan struct{}) {
 	// LIFO defers publish the final state before releasing Shutdown's waiter.
-	// The active Convert call has already returned and cleaned its staging files.
+	// All active Convert calls have returned and cleaned their staging files.
 	defer close(done)
 	defer func() {
 		s.update(func() {
@@ -349,10 +357,7 @@ func (s *Service) run(ctx context.Context, req Request, done chan struct{}) {
 			s.state.Running = false
 		})
 	}()
-	for i := range s.State().Jobs {
-		if ctx.Err() != nil {
-			break
-		}
+	err := batch.Run(ctx, len(s.State().Jobs), req.Concurrency, func(i int) {
 		s.update(func() { s.state.Jobs[i].Status = "running" })
 		job := s.State().Jobs[i]
 		index := job.Index
@@ -363,7 +368,7 @@ func (s *Service) run(ctx context.Context, req Request, done chan struct{}) {
 			},
 		})
 		// Ordinary job failures do not roll back earlier outputs or abort later
-		// jobs. Cancellation stops the next iteration and cancels pending work.
+		// jobs. Cancellation stops scheduling and cancels pending work.
 		s.update(func() {
 			j := &s.state.Jobs[i]
 			switch {
@@ -380,6 +385,15 @@ func (s *Service) run(ctx context.Context, req Request, done chan struct{}) {
 				j.Status, j.Error = "failed", "conversion returned an unverified output"
 			}
 		})
+	})
+	if err != nil {
+		s.update(func() {
+			for i := range s.state.Jobs {
+				if s.state.Jobs[i].Status == "pending" {
+					s.state.Jobs[i].Status, s.state.Jobs[i].Error = "failed", err.Error()
+				}
+			}
+		})
 	}
 }
 
@@ -391,7 +405,7 @@ func (s *Service) Cancel() {
 	}
 }
 
-// Closing the window waits for the active native call to unwind and remove
+// Closing the window waits for all active native calls to unwind and remove
 // staging files; it never terminates the process midway through publication.
 func (s *Service) Shutdown() {
 	s.mu.Lock()

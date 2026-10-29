@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ninghaofeng/hdma2truehd/internal/audio"
+	"github.com/ninghaofeng/hdma2truehd/internal/batch"
 	"github.com/ninghaofeng/hdma2truehd/internal/buildinfo"
 )
 
@@ -31,6 +33,7 @@ Convert options (put flags before input paths):
   -o PATH             Single-file .thd/.eac3 output (not with --format both)
   --output-dir DIR    Batch output directory (must already exist)
   --format FORMAT     truehd (default), eac3, or both
+  --jobs N            Parallel conversion jobs, 1..8 (default 2; 1 is serial)
   --stream N          Explicit container audio stream index (one input only)
   --eac3-bitrate N    Total kb/s; default 960 for 5.1(side), 1536 for 7.1
   --overwrite         Explicitly replace existing outputs after success
@@ -72,7 +75,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	flags.SetOutput(errOut)
 	var output, outputDir, format string
-	var eac3Bitrate int
+	var eac3Bitrate, concurrency int
 	streamIndex := -1
 	var listTracks bool
 	var overwrite, skipVerify bool
@@ -82,6 +85,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		flags.StringVar(&format, "format", "truehd", "truehd, eac3 or both")
 		flags.IntVar(&eac3Bitrate, "eac3-bitrate", 0, "total E-AC-3 kb/s; 0 selects a default")
 		flags.IntVar(&streamIndex, "stream", -1, "explicit audio stream index")
+		flags.IntVar(&concurrency, "jobs", batch.DefaultConcurrency, "parallel conversion jobs, 1..8")
 		flags.BoolVar(&overwrite, "overwrite", false, "replace existing outputs")
 		flags.BoolVar(&skipVerify, "skip-verify", false, "skip full PCM comparison")
 	}
@@ -147,6 +151,10 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	// Plan all output paths before writing, including collisions with later
 	// inputs. Codec eligibility is checked by Convert for each job, not here.
+	if err := batch.ValidateConcurrency(concurrency); err != nil {
+		fmt.Fprintln(errOut, err)
+		return 2
+	}
 	if streamIndex < -1 || (streamIndex >= 0 && flags.NArg() != 1) {
 		fmt.Fprintln(errOut, "--stream requires a nonnegative index and exactly one input")
 		return 2
@@ -169,10 +177,10 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if streamIndex >= 0 {
 		options.StreamIndex = &streamIndex
 	}
-	return processJobs(ctx, jobs, options, backend.Convert, out, errOut)
+	return processJobs(ctx, jobs, options, concurrency, backend.Convert, out, errOut)
 }
 
-func processJobs(ctx context.Context, jobs []job, options audio.Options,
+func processJobs(ctx context.Context, jobs []job, options audio.Options, concurrency int,
 	convert func(context.Context, string, string, audio.Options) (audio.Result, error), out, errOut io.Writer) int {
 	// Progress/diagnostics stay on stderr; stdout reports final per-file results
 	// and totals. One failed job does not prevent independent later jobs.
@@ -183,18 +191,19 @@ func processJobs(ctx context.Context, jobs []job, options audio.Options,
 			break
 		}
 	}
+	var mu sync.Mutex
 	succeeded, failed, unverified := 0, 0, 0
-	for i, job := range jobs {
-		if ctx.Err() != nil {
-			// Interrupt is distinct from an ordinary conversion error. Already
-			// published outputs survive; the active conversion cleans its staging file.
-			break
-		}
+	err := batch.Run(ctx, len(jobs), concurrency, func(i int) {
+		job := jobs[i]
+		mu.Lock()
 		fmt.Fprintf(errOut, "[%d/%d] %s -> %s (encode%s)\n", i+1, len(jobs), job.input, job.output, verificationLabel(options.SkipVerify, strings.EqualFold(filepath.Ext(job.output), ".eac3")))
+		mu.Unlock()
 		jobOptions := options
 		var lastProgress time.Time
 		var lastStage string
 		jobOptions.Progress = func(p audio.Progress) {
+			mu.Lock()
+			defer mu.Unlock()
 			if options.Progress != nil {
 				options.Progress(p)
 			}
@@ -214,13 +223,15 @@ func processJobs(ctx context.Context, jobs []job, options audio.Options,
 			} else if p.Duration > 0 {
 				status = fmt.Sprintf(" ~%.1f%%", p.Fraction*100)
 			}
-			fmt.Fprintf(errOut, "  %s%s | %.1fs processed | %.1fs elapsed\n", label, status, p.Seconds, p.Elapsed)
+			fmt.Fprintf(errOut, "  [%d/%d] %s: %s%s | %.1fs processed | %.1fs elapsed\n", i+1, len(jobs), job.output, label, status, p.Seconds, p.Elapsed)
 		}
 		result, err := convert(ctx, job.input, job.output, jobOptions)
+		mu.Lock()
+		defer mu.Unlock()
 		if err != nil {
 			failed++
 			fmt.Fprintf(errOut, "FAILED: %s: %v\n", job.input, err)
-			continue
+			return
 		}
 		succeeded++
 		if result.Validated {
@@ -231,6 +242,10 @@ func processJobs(ctx context.Context, jobs []job, options audio.Options,
 			unverified++
 			fmt.Fprintf(out, "UNVERIFIED: %s (PCM comparison explicitly skipped)\n", result.Output)
 		}
+	})
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return 2
 	}
 	fmt.Fprintf(out, "Summary: %d succeeded, %d failed, %d unverified, %d not started\n",
 		succeeded, failed, unverified, len(jobs)-succeeded-failed)

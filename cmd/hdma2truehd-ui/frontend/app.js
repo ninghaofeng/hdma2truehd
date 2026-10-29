@@ -6,6 +6,8 @@ const translations = {
     local: "支持批量添加 · 直接读取本地文件，不上传、不复制整部电影", add: "选择文件",
     tracks: "文件与音轨", clear: "清空列表", empty: "添加文件后，在这里选择需要转换的音轨。",
     settings: "输出设置", formats: "输出格式", lossless: "无损", lossy: "有损",
+    concurrency: "并行任务数",
+    parallelNotice: "默认同时处理 2 项任务，可选 1–8；1 为串行。同一文件的音轨和输出格式也可并行，较高并行数会增加 CPU、内存与磁盘负载。",
     bitrate51: "E-AC-3 5.1 码率", auto51: "自动：960 kb/s",
     bitrate71: "E-AC-3 7.1 总码率", auto71: "自动：1536 kb/s",
     limits: "E-AC-3：仅支持 48 kHz 的 5.1(side) / 7.1。5.1 码率范围 384–1024，7.1 为 768–1536 kb/s。混合队列按音轨布局分别使用对应设置。",
@@ -29,6 +31,8 @@ const translations = {
     local: "Batch input · Local files only, no upload or full-movie copy", add: "Add files",
     tracks: "Files & audio tracks", clear: "Clear list", empty: "Add files, then select the audio tracks to convert.",
     settings: "Output settings", formats: "Output formats", lossless: "lossless", lossy: "lossy",
+    concurrency: "Parallel jobs",
+    parallelNotice: "Default: 2 concurrent jobs, adjustable from 1–8; 1 is serial. Tracks and formats from the same file may run concurrently. Higher concurrency increases CPU, memory and disk load.",
     bitrate51: "E-AC-3 5.1 bitrate", auto51: "Automatic: 960 kb/s",
     bitrate71: "E-AC-3 7.1 total bitrate", auto71: "Automatic: 1536 kb/s",
     limits: "E-AC-3: 48 kHz 5.1(side) / 7.1 only. 5.1: 384–1024; 7.1: 768–1536 kb/s. Mixed queues use each track's layout-specific setting.",
@@ -159,7 +163,7 @@ function renderInputs() {
 
 function renderState() {
   const locked = busy || state.running;
-  for (const id of ["add", "clear", "truehd", "eac3", "browse", "reset-output", "overwrite"]) $(id).disabled = locked;
+  for (const id of ["add", "clear", "truehd", "eac3", "concurrency", "browse", "reset-output", "overwrite"]) $(id).disabled = locked;
   $("drop").setAttribute("aria-disabled", String(locked));
   for (const id of ["bitrate51", "bitrate71"]) $(id).disabled = locked || !$("eac3").checked;
   $("start").disabled = locked || !backend || selected.size === 0 || incompatibleSelection() || (!$("truehd").checked && !$("eac3").checked);
@@ -266,6 +270,7 @@ $("start").addEventListener("click", async () => {
     acceptState(await backend.Start({tracks, truehd: $("truehd").checked, eac3: $("eac3").checked,
       bitrate51: $("eac3").checked ? Number($("bitrate51").value) : 0,
       bitrate71: $("eac3").checked ? Number($("bitrate71").value) : 0,
+      concurrency: Number($("concurrency").value),
       outputDir: $("output").value, overwrite: $("overwrite").checked}));
   } catch (error) { showError(error); }
   finally { busy = false; renderInputs(); renderState(); }

@@ -71,7 +71,9 @@ macOS 使用 `.tar.gz` 保留执行权限，Windows 使用 `.zip`，
   自动为 5.1 **960 kb/s**、7.1 **1536 kb/s**。
 - 可选输出目录，留空时与源文件同目录；MKV 输出使用 `电影名.track-索引.thd/.eac3`
   避免同一电影的不同音轨互相覆盖。覆盖已有文件需要显式勾选。
-- 串行队列、每项结果、错误提示、取消，以及可记住的中英文切换。
+- 并行队列默认同时处理 **2** 项任务，可选 **1–8**，选择 1 即为串行。
+  同一文件的多个音轨、TrueHD / E-AC-3 输出也可并行；每项输出独立校验与发布。
+  较高并行数会增加 CPU、内存和磁盘负载。提供每项结果、错误提示、取消，以及可记住的中英文切换。
   总进度条按已结束任务计数；每个文件分别显示转码、源 PCM 校验和输出校验阶段，
   以及已处理时长、阶段耗时和估计百分比。估计依据实际处理采样数与媒体时长；
   时长未知时显示不定进度，阶段真正成功才显示完成。CLI 同样输出阶段进度到 stderr。
@@ -165,7 +167,7 @@ restart header、声道顺序和极短输入 flush。库版本在运行时检查
    DTS 样本测试。合成回环验证编码器，不代替真实 DTS 解码或硬件播放验收。
 7. [`cmd/hdma2truehd-ui/main.go`](cmd/hdma2truehd-ui/main.go)、
    [`internal/gui/service.go`](internal/gui/service.go) 与
-   [`frontend/app.js`](cmd/hdma2truehd-ui/frontend/app.js)：桌面生命周期、批量预检和串行队列；
+   [`frontend/app.js`](cmd/hdma2truehd-ui/frontend/app.js)：桌面生命周期、批量预检和有界并行队列；
    注释说明快照所有权、修订号排序、取消/关闭等待及按声道布局保存码率的约束。
    [`tests/build/`](tests/build/) 使用隔离目录和模拟编译器验证构建/清理流程，
    不将这些测试视作原生编译或音频保真的证明。
@@ -350,6 +352,7 @@ hdma2truehd probe "input.dts"
 hdma2truehd convert -o "output.thd" "input.dts"
 hdma2truehd convert "input.dtshd"
 hdma2truehd convert --output-dir "converted" "film-5.1.dts" "film-7.1.dtshd"
+hdma2truehd convert --jobs 4 --output-dir "converted" "film-5.1.dts" "film-7.1.dtshd"
 hdma2truehd convert --overwrite -o "output.thd" "input.dts"
 hdma2truehd convert --skip-verify -o "output.thd" "input.dts"
 hdma2truehd convert --format eac3 -o "output.eac3" "input.dts"
@@ -396,8 +399,11 @@ TrueHD 默认校验会另外完整解码源文件和输出文件，因此需要�
 支持硬链接（如 APFS、NTFS）。不支持时明确报错，不采用不安全回退。
 `--overwrite` 也只在新结果成功后替换原输出。
 
-批量任务默认串行，单文件失败不阻止后续文件，最后统一汇总；同名输出冲突在
-开始前拒绝。Ctrl+C 取消当前原生操作、清理临时文件，并保留已发布的结果。
+批量任务默认同时处理 **2** 项，用 `--jobs 1` 恢复串行，`--jobs N` 可设置 **1–8**。
+并行单位为单个音轨的一种输出格式，同一文件的多个输出也可并行。
+单项失败不阻止其他任务，最后统一汇总；同名输出冲突在开始前拒绝。
+进度信息带任务编号与输出路径，避免混淆。Ctrl+C 停止调度新任务、取消所有运行中的
+原生操作，并等待临时文件清理后退出；已发布的结果保留。提高并行数会增加资源负载。
 退出码：`0` 成功，`1` 编解码/校验失败，`2` 参数错误，`130` 取消。
 
 ### 实验性支持矩阵
@@ -629,7 +635,11 @@ kits. The workflow currently does not sign code or notarize macOS applications.
 - Choose an output directory or leave it empty to use each source directory.
   MKV outputs use `movie.track-INDEX.thd/.eac3` to distinguish selected tracks.
   Existing outputs require explicit overwrite permission.
-- A serial queue provides per-job results, errors and cancellation. The queue
+- The queue defaults to **2** concurrent jobs, adjustable from **1–8**; choose
+  1 for serial operation. Tracks and TrueHD / E-AC-3 outputs from the same
+  file may run concurrently, each independently verified and published.
+  Higher concurrency increases CPU, memory and disk load.
+  Per-job results, errors and cancellation remain available. The queue
   bar counts finished jobs; per-file progress shows encoding, source PCM
   verification and output validation stages, processed duration, stage elapsed
   time and estimated percentages based on actual samples and media duration.
@@ -746,7 +756,7 @@ ownership and failure boundaries:
 7. [`cmd/hdma2truehd-ui/main.go`](cmd/hdma2truehd-ui/main.go),
    [`internal/gui/service.go`](internal/gui/service.go) and
    [`frontend/app.js`](cmd/hdma2truehd-ui/frontend/app.js): desktop lifecycle,
-   batch preflight and serial queue. Comments explain snapshot ownership,
+   batch preflight and bounded parallel queue. Comments explain snapshot ownership,
    revision ordering, cancellation/shutdown waits and per-layout bitrate capture.
    [`tests/build/`](tests/build/) uses isolated directories and stub compilers to
    test build/cleanup orchestration, not native compilation or audio fidelity.
@@ -964,6 +974,7 @@ hdma2truehd probe "input.dts"
 hdma2truehd convert -o "output.thd" "input.dts"
 hdma2truehd convert "input.dtshd"
 hdma2truehd convert --output-dir "converted" "film-5.1.dts" "film-7.1.dtshd"
+hdma2truehd convert --jobs 4 --output-dir "converted" "film-5.1.dts" "film-7.1.dtshd"
 hdma2truehd convert --overwrite -o "output.thd" "input.dts"
 hdma2truehd convert --skip-verify -o "output.thd" "input.dts"
 hdma2truehd convert --format eac3 -o "output.eac3" "input.dts"
@@ -1023,10 +1034,15 @@ hard links, such as APFS or NTFS. Unsupported filesystems produce an explicit
 error rather than an unsafe fallback. `--overwrite` also replaces an existing
 output only after the new result succeeds.
 
-Batch jobs run sequentially. A file failure does not stop later files; results
-are summarized at the end. Output-name collisions are rejected before processing.
-Ctrl+C cancels the active native operation, cleans temporary files and preserves
-already published outputs. Exit codes: `0` success, `1` codec/verification failure,
+Batch jobs default to **2** concurrent conversions. Use `--jobs N` for **1–8**
+or `--jobs 1` for serial operation. A job is one track in one output format;
+tracks and formats from the same file may run concurrently. Higher concurrency
+increases CPU, memory and disk load. A job failure does not stop other jobs;
+results are summarized at the end. Output-name collisions are rejected before
+processing. Progress includes job indices and output paths to identify each job.
+Ctrl+C stops scheduling, cancels all active native operations and waits for
+temporary-file cleanup, preserving published outputs.
+Exit codes: `0` success, `1` codec/verification failure,
 `2` argument error, `130` cancellation.
 
 ### Experimental support matrix

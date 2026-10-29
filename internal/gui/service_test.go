@@ -201,10 +201,15 @@ func TestQueueContinuesAndValidates(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	for i := 1; i < len(seen); i++ {
-		if seen[i].Revision <= seen[i-1].Revision {
-			t.Fatal("non-monotonic queue revision")
+	revisions := map[uint64]bool{}
+	for _, snapshot := range seen {
+		if revisions[snapshot.Revision] || snapshot.Revision > state.Revision {
+			t.Fatal("duplicate or invalid queue revision")
 		}
+		revisions[snapshot.Revision] = true
+	}
+	if !revisions[state.Revision] {
+		t.Fatal("final queue snapshot not emitted")
 	}
 }
 
@@ -218,7 +223,7 @@ func TestCancellationAndShutdown(t *testing.T) {
 		return audio.Result{}, ctx.Err()
 	}}
 	s := New(backend, nil)
-	req := Request{Tracks: []Selection{{filepath.Join(t.TempDir(), "source.dts"), 0}}, TrueHD: true, EAC3: true}
+	req := Request{Tracks: []Selection{{filepath.Join(t.TempDir(), "source.dts"), 0}}, TrueHD: true, EAC3: true, Concurrency: 1}
 	if _, err := s.Start(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}

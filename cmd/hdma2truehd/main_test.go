@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ninghaofeng/hdma2truehd/internal/audio"
 	"github.com/ninghaofeng/hdma2truehd/internal/buildinfo"
@@ -76,7 +78,7 @@ func TestOutputFormats(t *testing.T) {
 		}
 	}
 	var out, errOut bytes.Buffer
-	code := processJobs(t.Context(), []job{{input, "output.eac3"}}, audio.Options{},
+	code := processJobs(t.Context(), []job{{input, "output.eac3"}}, audio.Options{}, 1,
 		func(context.Context, string, string, audio.Options) (audio.Result, error) {
 			return audio.Result{Output: "output.eac3", Lossy: true, Validated: true, Samples: 100, DecodedSamples: 1536}, nil
 		}, &out, &errOut)
@@ -97,6 +99,10 @@ func TestRunArguments(t *testing.T) {
 		{[]string{"convert", "--not-an-option"}, 2},
 		{[]string{"convert", "-h"}, 0},
 		{[]string{"doctor", "--ffmpeg", "unused"}, 2},
+		{[]string{"convert", "--jobs", "0", "source.dts"}, 2},
+		{[]string{"convert", "--jobs", "9", "source.dts"}, 2},
+		{[]string{"convert", "--jobs", "-1", "source.dts"}, 2},
+		{[]string{"convert", "--jobs", "invalid", "source.dts"}, 2},
 	} {
 		var out, errOut bytes.Buffer
 		if code := run(context.Background(), tt.args, &out, &errOut); code != tt.code {
@@ -124,7 +130,7 @@ func TestStageProgress(t *testing.T) {
 	var out, diagnostics bytes.Buffer
 	forwarded := 0
 	code := processJobs(t.Context(), []job{{"source.dts", "out.thd"}},
-		audio.Options{Progress: func(audio.Progress) { forwarded++ }},
+		audio.Options{Progress: func(audio.Progress) { forwarded++ }}, 1,
 		func(_ context.Context, _, output string, options audio.Options) (audio.Result, error) {
 			for _, p := range []audio.Progress{
 				{Stage: "encode"},
@@ -144,6 +150,105 @@ func TestStageProgress(t *testing.T) {
 		if !strings.Contains(diagnostics.String(), want) || strings.Contains(out.String(), want) {
 			t.Fatalf("missing/misdirected progress %q: stdout=%s stderr=%s", want, &out, &diagnostics)
 		}
+	}
+}
+
+func TestParallelBatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseWork := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseWork()
+	done := make(chan struct{})
+	var out, diagnostics bytes.Buffer
+	code, forwarded := -1, 0
+	go func() {
+		defer close(done)
+		code = processJobs(ctx, []job{{"same.mkv", "a.thd"}, {"same.mkv", "b.eac3"}, {"same.mkv", "c.thd"}, {"same.mkv", "d.thd"}},
+			audio.Options{Progress: func(audio.Progress) { forwarded++ }}, 2,
+			func(ctx context.Context, _, output string, options audio.Options) (audio.Result, error) {
+				options.Progress(audio.Progress{Stage: "encode"})
+				started <- struct{}{}
+				select {
+				case <-release:
+				case <-ctx.Done():
+					return audio.Result{}, ctx.Err()
+				}
+				if output == "a.thd" {
+					return audio.Result{}, fmt.Errorf("deliberate failure")
+				}
+				return audio.Result{Output: output, Verified: true}, nil
+			}, &out, &diagnostics)
+	}()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("CLI did not run two jobs concurrently")
+		}
+	}
+	// Release the initial workers; subsequent tasks see the closed channel.
+	releaseWork()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("CLI parallel batch did not finish")
+	}
+	if code != 1 || forwarded != 4 || !strings.Contains(out.String(), "3 succeeded, 1 failed, 0 unverified, 0 not started") {
+		t.Fatalf("code=%d forwarded=%d stdout=%s stderr=%s", code, forwarded, &out, &diagnostics)
+	}
+	for _, output := range []string{"a.thd", "b.eac3", "c.thd", "d.thd"} {
+		if !strings.Contains(diagnostics.String(), output+": Encoding") {
+			t.Fatalf("progress missing job identity %s: %s", output, &diagnostics)
+		}
+	}
+}
+
+func TestParallelBatchCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	started := make(chan struct{}, 4)
+	cleanup := make(chan struct{})
+	var cleanupOnce sync.Once
+	finishCleanup := func() { cleanupOnce.Do(func() { close(cleanup) }) }
+	defer finishCleanup()
+	done := make(chan struct{})
+	var out, diagnostics bytes.Buffer
+	code := -1
+	go func() {
+		defer close(done)
+		code = processJobs(ctx, []job{{"a.dts", "a.thd"}, {"b.dts", "b.thd"}, {"c.dts", "c.thd"}, {"d.dts", "d.thd"}},
+			audio.Options{}, 2,
+			func(ctx context.Context, _, _ string, _ audio.Options) (audio.Result, error) {
+				started <- struct{}{}
+				<-ctx.Done()
+				<-cleanup
+				return audio.Result{}, ctx.Err()
+			}, &out, &diagnostics)
+	}()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("CLI parallel workers did not start")
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+		t.Fatal("CLI returned before cleanup")
+	default:
+	}
+	finishCleanup()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("CLI parallel cancellation did not finish")
+	}
+	if code != 130 || !strings.Contains(out.String(), "0 succeeded, 2 failed, 0 unverified, 2 not started") {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, &out, &diagnostics)
 	}
 }
 
@@ -168,7 +273,7 @@ func TestBatchProcessing(t *testing.T) {
 			}
 			var out, errOut bytes.Buffer
 			code := processJobs(ctx, []job{{"a.dts", "a.thd"}, {"b.dts", "b.thd"}},
-				audio.Options{SkipVerify: mode == "skip"}, convert, &out, &errOut)
+				audio.Options{SkipVerify: mode == "skip"}, 1, convert, &out, &errOut)
 			if !strings.Contains(errOut.String(), "DTS:X objects are not rendered and object metadata is not retained") {
 				t.Fatalf("missing compatible-channel conversion notice: %s", &errOut)
 			}
