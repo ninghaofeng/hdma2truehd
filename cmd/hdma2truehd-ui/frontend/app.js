@@ -7,6 +7,10 @@ const translations = {
     tracks: "文件与音轨", clear: "清空列表", empty: "添加文件后，在这里选择需要转换的音轨。",
     settings: "输出设置", formats: "输出格式", lossless: "无损", lossy: "有损",
     concurrency: "并行任务数",
+    retryFailed: "重试失败任务", viewLogs: "查看日志", logs: "诊断日志", close: "关闭",
+    technical: "技术详情", warning: "警告", logTruncated: "仅显示最新 128 KiB；更早记录请查看日志文件及同名 .1 文件。",
+    logNotice: "日志仅保存在程序旁的 logs 目录，含文件路径和原始诊断信息，不上传。每次启动单独记录，单次最多保留两段各 5 MiB；旧会话不会自动删除。再次点击“查看日志”可刷新。",
+    integrityNotice: "源文件完整性未确认：没有可信的原始长度或校验值时，无法保证识别所有截断。可疑时长会警告，确认的解码或校验错误仍阻止输出。",
     parallelNotice: "默认同时处理 2 项任务，可选 1–8；1 为串行。同一文件的音轨和输出格式也可并行，较高并行数会增加 CPU、内存与磁盘负载。",
     bitrate51: "E-AC-3 5.1 码率", auto51: "自动：960 kb/s",
     bitrate71: "E-AC-3 7.1 总码率", auto71: "自动：1536 kb/s",
@@ -32,6 +36,10 @@ const translations = {
     tracks: "Files & audio tracks", clear: "Clear list", empty: "Add files, then select the audio tracks to convert.",
     settings: "Output settings", formats: "Output formats", lossless: "lossless", lossy: "lossy",
     concurrency: "Parallel jobs",
+    retryFailed: "Retry failed jobs", viewLogs: "View logs", logs: "Diagnostic logs", close: "Close",
+    technical: "Technical details", warning: "Warning", logTruncated: "Showing the latest 128 KiB. Earlier records are in the log file and its .1 segment.",
+    logNotice: "Logs remain in the logs directory beside the application, include file paths and raw diagnostics, and are never uploaded. Each launch keeps up to two 5 MiB segments; older sessions are not deleted automatically. Click View logs again to refresh.",
+    integrityNotice: "Source completeness is unconfirmed: without a trusted original length/checksum, not every truncation can be detected. Suspicious duration produces warnings; confirmed decoding/verification errors still block publication.",
     parallelNotice: "Default: 2 concurrent jobs, adjustable from 1–8; 1 is serial. Tracks and formats from the same file may run concurrently. Higher concurrency increases CPU, memory and disk load.",
     bitrate51: "E-AC-3 5.1 bitrate", auto51: "Automatic: 960 kb/s",
     bitrate71: "E-AC-3 7.1 total bitrate", auto71: "Automatic: 1536 kb/s",
@@ -63,6 +71,7 @@ let state = {revision: 0, running: false, jobs: []};
 let busy = false;
 let cancelling = false;
 let backend = null;
+let lastError = null;
 const t = (key) => translations[language][key];
 // Tuple serialization avoids delimiter collisions with arbitrary file paths,
 // including Windows drive letters. The index remains the container's index.
@@ -78,11 +87,80 @@ function node(tag, text, className) {
 }
 
 function showError(error) {
-  $("error").textContent = String(error);
+  lastError = error;
+  $("error").replaceChildren();
+  const key = typeof error === "string" ? Object.keys(translations.zh).find(key => translations.zh[key] === error || translations.en[key] === error) : "";
+  if (key) {
+    $("error").textContent = t(key);
+  } else {
+    appendProblem($("error"), error);
+  }
   $("error").hidden = false;
 }
 
-function clearError() { $("error").hidden = true; $("error").textContent = ""; }
+function clearError() { lastError = null; $("error").hidden = true; $("error").textContent = ""; }
+
+function normalizeProblem(error) {
+  if (typeof error?.code === "string") return error;
+  const detail = String(error?.message || error);
+  try {
+    const parsed = JSON.parse(detail.replace(/^Error: /, ""));
+    if (typeof parsed?.code === "string") return parsed;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+  }
+  return {code: "unexpected", detail};
+}
+
+function problemText(problem) {
+  const policy = problem.code?.startsWith("unsupported_") ? reasonMessages()[problem.code.slice(12)] : "";
+  if (policy) return policy;
+  const zh = {
+    unexpected: "操作失败，请查看技术详情或诊断日志。", cancelled: "操作已取消。", deadline: "操作超时，已停止处理。",
+    permission: "没有读写权限，或目标位置只读。", not_found: "文件或目录不存在。", output_exists: "输出已存在；请更换位置或明确允许覆盖。",
+    no_space: "磁盘空间不足，请释放空间后重试。", memory: "内存不足，请降低并行任务数后重试。",
+    temporary_io: "遇到临时读写错误。", io: "文件读写失败，请检查磁盘和文件。",
+    corrupt_data: "音频数据损坏或流信息发生变化，已停止当前任务。", track_missing: "没有找到指定音轨，请重新读取文件。",
+    codec_unavailable: "当前后端缺少所需编解码器或封装支持。", native_failed: "音频库处理失败，请查看技术详情。",
+    probe_failed: "无法解析音轨信息，请检查文件或查看技术详情。", encode_failed: "转码失败，未发布当前输出。",
+    verification_failed: "输出校验失败，未发布当前输出。", publish_failed: "保存输出失败，请检查目标目录、权限和文件系统。",
+    preflight_failed: "转换预检失败，请检查音轨选择、输出设置或技术详情。",
+    cleanup_failed: "临时文件清理失败；输出可能已经发布，请检查日志后再重试。",
+    source_changed: "转换期间源文件发生变化，已阻止发布输出。", log_unavailable: "日志无法读取或保存。请检查程序旁 logs 目录的权限与磁盘空间；不会自动改存其他位置。",
+    ffmpeg_warning: "音频库发出诊断警告，请查看技术详情；警告本身不代表转换失败。",
+    duration_short: "实际解码时长明显短于元数据时长；源文件可能不完整，也可能是时长信息不准确。",
+    retrying: "临时读写错误：正在重新尝试一次；格式、损坏及校验错误不会自动重试。",
+    warnings_truncated: "此任务警告较多，界面仅保留前几项；其他诊断请查看日志。"
+  };
+  const en = {
+    unexpected: "Operation failed. See technical details or logs.", cancelled: "Operation cancelled.", deadline: "Operation timed out.",
+    permission: "Access denied or the destination is read-only.", not_found: "File or directory not found.", output_exists: "Output exists. Choose another location or explicitly allow overwrite.",
+    no_space: "Not enough disk space. Free space before retrying.", memory: "Not enough memory. Reduce parallel jobs before retrying.",
+    temporary_io: "Temporary I/O failure.", io: "File I/O failed. Check the disk and file.",
+    corrupt_data: "Damaged audio or changed stream information; the current job was stopped.", track_missing: "The selected audio track was not found. Inspect the file again.",
+    codec_unavailable: "Required codec or container support is unavailable.", native_failed: "Audio library operation failed. See technical details.",
+    probe_failed: "Cannot read audio metadata. Check the file or technical details.", encode_failed: "Encoding failed; this output was not published.",
+    verification_failed: "Verification failed; this output was not published.", publish_failed: "Cannot publish output. Check directory permissions and filesystem support.",
+    preflight_failed: "Preflight failed. Check tracks, output settings or technical details.",
+    cleanup_failed: "Temporary-file cleanup failed. Output may already be published; check logs before retrying.",
+    source_changed: "Source changed during conversion; output publication was blocked.", log_unavailable: "Cannot read or save logs. Check permissions and disk space beside the application. No alternate location is used automatically.",
+    ffmpeg_warning: "Audio library diagnostic warning. See technical details; a warning alone does not mean conversion failed.",
+    duration_short: "Decoded duration is significantly shorter than metadata. The source may be incomplete or the metadata inaccurate.",
+    retrying: "Temporary I/O failure: retrying once. Format, corruption and verification errors are not retried automatically.",
+    warnings_truncated: "Many warnings were reported. The per-job display is limited; see logs for further diagnostics."
+  };
+  return (language === "zh" ? zh : en)[problem.code] || (language === "zh" ? zh : en).unexpected;
+}
+
+function appendProblem(parent, error, warning = false) {
+  const problem = normalizeProblem(error);
+  parent.append(node("p", `${warning ? t("warning") + ": " : ""}${problemText(problem)}`, "problem"));
+  if (problem.detail) {
+    const details = node("details", undefined, "technical");
+    details.append(node("summary", t("technical")), node("pre", problem.detail));
+    parent.append(details);
+  }
+}
 
 function trackProblem(track) {
   const info = track.info;
@@ -93,7 +171,11 @@ function trackProblem(track) {
   if (!reason) return "";
   const kind = code || (eac3 ? track.eac3ProblemCode : "");
   const actual = `${[stream.codec_name, stream.profile].filter(Boolean).join(" / ") || "?"} · ${stream.channel_layout || `${stream.channels} ch`} · ${info.sample_rate || "?"} Hz · ${info.effective_bits || "?"} bit`;
-  const messages = language === "zh" ? {
+  return `${reasonMessages()[kind] || reason} (${actual})`;
+}
+
+function reasonMessages() {
+  return language === "zh" ? {
     codec: "仅支持 DTS-HD MA 无损源音轨；当前编码不支持转换。",
     profile: "当前为 DTS 有损核心、HRA 或未确认的 profile，不是已确认的 DTS-HD MA。",
     layout: "仅支持 5.1(side)、5.1（后环绕）和标准 7.1；不自动重映射或降混。",
@@ -110,7 +192,6 @@ function trackProblem(track) {
     bits: "Unknown or unsupported effective precision; confirmed 16/24-bit sources only.",
     eac3_format: "TrueHD is available, but E-AC-3 requires 48 kHz 5.1(side)/7.1. Deselect E-AC-3."
   };
-  return `${messages[kind] || reason} (${actual})`;
 }
 
 function incompatibleSelection() {
@@ -128,7 +209,7 @@ function renderInputs() {
   for (const input of inputs) {
     const file = node("div", undefined, "input-file");
     file.append(node("div", filename(input.path), "file-name"), node("div", input.path, "file-path"));
-    if (input.error) file.append(node("p", input.error, "problem"));
+    if (input.error) appendProblem(file, input.problem || input.error);
     for (const track of input.tracks) {
       const info = track.info;
       const stream = info.stream;
@@ -169,6 +250,11 @@ function renderState() {
   $("start").disabled = locked || !backend || selected.size === 0 || incompatibleSelection() || (!$("truehd").checked && !$("eac3").checked);
   $("cancel").disabled = !state.running || cancelling;
   $("cancel").textContent = t(cancelling ? "cancelling" : "cancel");
+  $("retry-failed").disabled = locked || !backend || !state.jobs.some(job => job.status === "failed");
+  $("view-logs").disabled = !backend;
+  $("log-error").replaceChildren();
+  $("log-error").hidden = !state.logProblem;
+  if (state.logProblem) appendProblem($("log-error"), state.logProblem);
   $("output").placeholder = t("sameDir");
   $("activity").textContent = t(busy ? "busy" : state.running ? "working" : "idle");
   if (!locked && incompatibleSelection()) $("activity").textContent = t("incompatible");
@@ -196,7 +282,8 @@ function renderState() {
       item.append(node("div", `${text} · ${t("processed")} ${clock(p.seconds)}${p.duration > 0 ? " / " + clock(p.duration) : ""} · ${t("elapsed")} ${clock(p.elapsed)}`, "track-meta"));
     }
     if (job.samples) item.append(node("div", `${job.samples} ${t("samples")}${job.decodedSamples ? ` · ${job.decodedSamples} ${t("decoded")}` : ""}`, "track-meta"));
-    if (job.error) item.append(node("p", job.error, "problem"));
+    if (job.error) appendProblem(item, job.problem || job.error);
+    for (const warning of job.warnings || []) appendProblem(item, warning, true);
     fragment.append(item);
   }
   $("jobs").replaceChildren(fragment);
@@ -210,6 +297,7 @@ function applyLanguage() {
   document.querySelectorAll("[data-i18n]").forEach((element) => { element.textContent = t(element.dataset.i18n); });
   renderInputs();
   renderState();
+  if (lastError !== null) showError(lastError);
 }
 
 function acceptState(next) {
@@ -283,6 +371,28 @@ $("cancel").addEventListener("click", async () => {
   try { await backend.Cancel(); }
   catch (error) { cancelling = false; showError(error); renderState(); }
 });
+
+$("retry-failed").addEventListener("click", async () => {
+  if (!backend || busy || state.running) return;
+  clearError();
+  busy = true;
+  renderInputs(); renderState();
+  try { acceptState(await backend.RetryFailed()); }
+  catch (error) { showError(error); }
+  finally { busy = false; renderInputs(); renderState(); }
+});
+$("view-logs").addEventListener("click", async () => {
+  if (!backend) return;
+  try {
+    const view = await backend.Logs();
+    $("log-path").textContent = view.path;
+    $("log-content").textContent = view.content;
+    $("log-truncated").hidden = !view.truncated;
+    $("logs").hidden = false;
+    if (view.problem) showError(view.problem);
+  } catch (error) { showError(error); }
+});
+$("close-logs").addEventListener("click", () => { $("logs").hidden = true; });
 
 applyLanguage();
 if (window.go?.main?.App && window.runtime) {

@@ -41,7 +41,7 @@ static int interrupted(void *opaque)
     return hdmaGoCancelled(op->handle);
 }
 
-void hdma_eac3_close(HDMAEAC3 *op)
+static void eac3_close(HDMAEAC3 *op)
 {
     /* finish reports output flush/close errors. This cleanup also accepts
      * partially initialized operations from any failed open step. */
@@ -59,7 +59,7 @@ void hdma_eac3_close(HDMAEAC3 *op)
     av_free(op);
 }
 
-int hdma_eac3_open(const char *path, int channels, int bitrate,
+static int eac3_open(const char *path, int channels, int bitrate,
                    uintptr_t handle, HDMAEAC3 **result, char *error)
 {
     *result = NULL;
@@ -269,7 +269,7 @@ static int append(HDMAEAC3 *op, const unsigned char *pcm, int count)
     return 0;
 }
 
-int hdma_eac3_write(HDMAEAC3 *op, const unsigned char *pcm, int size, char *error)
+static int eac3_write(HDMAEAC3 *op, const unsigned char *pcm, int size, char *error)
 {
     if (size <= 0 || size % (op->channels * 4))
         return report(error, "E-AC-3 PCM frame alignment", AVERROR(EINVAL));
@@ -281,7 +281,7 @@ int hdma_eac3_write(HDMAEAC3 *op, const unsigned char *pcm, int size, char *erro
     return 0;
 }
 
-int hdma_eac3_finish(HDMAEAC3 *op, uint64_t *samples, uint64_t *decoded, char *error)
+static int eac3_finish(HDMAEAC3 *op, uint64_t *samples, uint64_t *decoded, char *error)
 {
     /* Raw E-AC-3 has no gapless trim metadata. Flush the MDCT's 256-sample
      * delay explicitly so the source tail survives, then pad the final unit.
@@ -315,4 +315,36 @@ int hdma_eac3_finish(HDMAEAC3 *op, uint64_t *samples, uint64_t *decoded, char *e
     *samples = op->samples;
     *decoded = op->frames * 1536;
     return 0;
+}
+
+int hdma_eac3_open(const char *path, int channels, int bitrate,
+                   uintptr_t handle, HDMAEAC3 **result, char *error)
+{
+    uintptr_t previous = hdma_log_enter(handle);
+    int ret = eac3_open(path, channels, bitrate, handle, result, error);
+    hdma_log_leave(previous);
+    return ret;
+}
+
+void hdma_eac3_close(HDMAEAC3 *op)
+{
+    uintptr_t previous = hdma_log_enter(op ? op->handle : 0);
+    eac3_close(op);
+    hdma_log_leave(previous);
+}
+
+int hdma_eac3_write(HDMAEAC3 *op, const unsigned char *pcm, int size, char *error)
+{
+    uintptr_t previous = hdma_log_enter(op->handle);
+    int ret = eac3_write(op, pcm, size, error);
+    hdma_log_leave(previous);
+    return ret;
+}
+
+int hdma_eac3_finish(HDMAEAC3 *op, uint64_t *samples, uint64_t *decoded, char *error)
+{
+    uintptr_t previous = hdma_log_enter(op->handle);
+    int ret = eac3_finish(op, samples, decoded, error);
+    hdma_log_leave(previous);
+    return ret;
 }

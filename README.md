@@ -78,7 +78,7 @@ macOS 使用 `.tar.gz` 保留执行权限，Windows 使用 `.zip`，
   以及已处理时长、阶段耗时和估计百分比。估计依据实际处理采样数与媒体时长；
   时长未知时显示不定进度，阶段真正成功才显示完成。CLI 同样输出阶段进度到 stderr。
   百分比不代替完整采样校验。关闭窗口会取消并等待清理，已发布的输出保留；
-  其他技术诊断仍保留后端原始消息。
+  技术错误先显示中文/英文概要，原始消息保留在可展开的技术详情与日志中。
 - 仅生成独立音频文件，不封装回 MKV、不解码视频或字幕，也不解析 DTS:X 对象。
 
 下文的平台构建入口默认同时生成 CLI 和 UI，并打包到同一发布目录。
@@ -404,7 +404,32 @@ TrueHD 默认校验会另外完整解码源文件和输出文件，因此需要�
 单项失败不阻止其他任务，最后统一汇总；同名输出冲突在开始前拒绝。
 进度信息带任务编号与输出路径，避免混淆。Ctrl+C 停止调度新任务、取消所有运行中的
 原生操作，并等待临时文件清理后退出；已发布的结果保留。提高并行数会增加资源负载。
-退出码：`0` 成功，`1` 编解码/校验失败，`2` 参数错误，`130` 取消。
+退出码：`0` 成功，`1` 处理或日志失败，`2` 参数错误，`130` 取消。
+
+#### 错误恢复、日志与源完整性
+
+- 仅明确的临时 I/O 错误（中断、暂不可用、I/O 超时）会在清理临时文件后，
+  等待约 300 ms，从头自动重试一次；不支持的格式、音频损坏、校验不一致、
+  空间不足、权限错误、发布或清理失败及用户取消不自动重试。
+  单独解析音轨信息也按相同规则最多重试一次；转换内部的探测不叠加重试次数。
+- 桌面端“重试失败任务”会重新预检，只重做失败项，保留成功与取消项；
+  原输出保护、覆盖权限与输入冲突检查仍然有效。CLI 可根据失败项的输入/输出
+  路径重新运行对应转换命令，不必重做整个批次。
+- 日志自动保存到**程序所在目录的 `logs/`**，不依赖启动时的工作目录。
+  macOS `.app` 的日志位于应用包旁，不写入签名包内部；Windows 位于 `.exe` 旁。
+  目录不可写、空间不足或日志写入失败会明确提示，不自动改存其他位置；
+  CLI 即使转换成功，日志不可用也以非零码退出。
+- 每次启动生成独立 JSONL 文件，记录版本、平台、任务路径、阶段、尝试次数、
+  原始错误及 FFmpeg 警告/错误。并行操作使用各自的上下文；
+  无法归属到具体任务的 FFmpeg 内部线程消息作为全局诊断记录。
+  每个会话最多保留两段各 **5 MiB**，前一段使用 `.1` 后缀；旧会话不自动删除。
+  界面“查看日志”显示最新 **128 KiB** 并标记截取，可再次点击刷新；
+  分享诊断前请检查文件路径等个人信息。日志不会上传。
+- 在发布前复查源文件身份、大小与修改时间，发现变化则阻止发布。
+  实际解码时长比元数据短超过 **2 秒和元数据时长的 2%** 时发出疑似不完整警告，
+  不单凭时长判定损坏；确定的解码/PCM/长度错误仍阻止发布。
+  没有可信的原始长度或校验值时，**源文件完整性仍未确认**，
+  无法保证检测合法帧边界截断或大小与时间均被保留的内容变更。
 
 ### 实验性支持矩阵
 
@@ -647,7 +672,7 @@ kits. The workflow currently does not sign code or notarize macOS applications.
   The CLI also reports stage progress on stderr. Estimates never replace full
   sample verification. Closing the window cancels and waits for cleanup,
   preserving published outputs. Chinese/English selection is remembered;
-  other technical diagnostics retain the original backend messages.
+  technical failures show localized summaries with expandable raw details and logs.
 - Outputs are separate audio files, not a remuxed MKV. No video/subtitle
   decoding or DTS:X object rendering is added.
 
@@ -1042,8 +1067,42 @@ results are summarized at the end. Output-name collisions are rejected before
 processing. Progress includes job indices and output paths to identify each job.
 Ctrl+C stops scheduling, cancels all active native operations and waits for
 temporary-file cleanup, preserving published outputs.
-Exit codes: `0` success, `1` codec/verification failure,
+Exit codes: `0` success, `1` processing or diagnostic-log failure,
 `2` argument error, `130` cancellation.
+
+#### Recovery, diagnostics and source completeness
+
+- Only explicit temporary I/O failures (interruption, temporary unavailability
+  or I/O timeout) retry the entire transaction once, after cleanup and about
+  300 ms of cancellable backoff. Unsupported formats, corruption, verification
+  mismatches, disk-full/access errors, publication/cleanup failures and user
+  cancellation are not retried automatically.
+  Standalone metadata inspection uses the same one-retry policy; nested probes
+  inside conversion do not multiply its retry count.
+- Desktop **Retry failed jobs** revalidates and reruns failed jobs only,
+  preserving successful and cancelled results and all overwrite/input-alias
+  protections. CLI users can rerun individual failed input/output paths from
+  diagnostics without repeating the complete batch.
+- Logs go to **`logs/` beside the application**, independent of the working
+  directory: beside the macOS `.app`, not inside its signed bundle, or beside
+  the Windows `.exe`. Log failures are shown explicitly; there is no automatic
+  fallback directory. CLI logging failures result in a nonzero exit even when
+  conversion succeeded.
+- Each launch creates a JSONL session with version/platform, task paths,
+  stages, attempt numbers, original errors and FFmpeg warning/error messages.
+  Parallel operations carry separate diagnostic contexts; unscoped FFmpeg
+  internal-thread messages are recorded globally rather than assigned to a job.
+  Each session retains up to two **5 MiB** segments; the older has a `.1` suffix.
+  Previous sessions are not deleted automatically. **View logs** displays the
+  latest **128 KiB**, labels truncation and can be clicked again to refresh.
+  Logs are never uploaded; review personal file paths before sharing them.
+- Before publication, source identity, size and modification time are checked
+  again; a detected change blocks publication. Decoded duration shorter than
+  metadata by more than **both 2 seconds and 2%** produces a warning, not a
+  corruption verdict. Confirmed decoding, PCM or length failures still block
+  output. Without a trusted original length/checksum, source completeness is
+  **unconfirmed**: clean frame-boundary truncation and changes preserving size
+  and modification time cannot always be detected.
 
 ### Experimental support matrix
 

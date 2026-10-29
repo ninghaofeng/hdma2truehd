@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/ninghaofeng/hdma2truehd/internal/av"
+	"github.com/ninghaofeng/hdma2truehd/internal/diagnostic"
 )
 
 // Stream exposes codec-style JSON fields; Index is the global container stream
@@ -51,19 +52,27 @@ func localFile(path string) (string, error) {
 
 // Probe reports metadata but does not assert that a file is a supported source:
 // it is also used to inspect generated TrueHD and synthetic PCM fixtures.
-func (b Backend) Probe(ctx context.Context, path string) (Info, error) {
-	if b.probe != nil {
-		return b.probe(ctx, path)
-	}
-	path, err := localFile(path)
+func (b Backend) Probe(ctx context.Context, path string) (result Info, err error) {
+	err = probeWithRetry(ctx, path, func(ctx context.Context) error {
+		if b.probe != nil {
+			result, err = b.probe(ctx, path)
+			return err
+		}
+		path, err = localFile(path)
+		if err != nil {
+			return err
+		}
+		info, probeErr := av.Probe(ctx, path)
+		if probeErr != nil {
+			return probeErr
+		}
+		result = fromNative(path, info)
+		return nil
+	})
 	if err != nil {
 		return Info{}, err
 	}
-	info, err := av.Probe(ctx, path)
-	if err != nil {
-		return Info{}, err
-	}
-	return fromNative(path, info), nil
+	return result, nil
 }
 
 func fromNative(path string, info av.Info) Info {
@@ -86,11 +95,16 @@ type Track struct {
 // ProbeTracks inventories audio, including unsupported codecs. Conversion
 // eligibility is a separate policy so the UI can explain disabled selections.
 func (b Backend) ProbeTracks(ctx context.Context, path string) ([]Track, error) {
-	path, err := localFile(path)
-	if err != nil {
-		return nil, err
-	}
-	found, err := av.ProbeTracks(ctx, path)
+	var found []av.Track
+	err := probeWithRetry(ctx, path, func(ctx context.Context) error {
+		var err error
+		path, err = localFile(path)
+		if err != nil {
+			return err
+		}
+		found, err = av.ProbeTracks(ctx, path)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -104,16 +118,26 @@ func (b Backend) ProbeTracks(ctx context.Context, path string) ([]Track, error) 
 
 // ProbeStream selects exactly one global audio index without choosing a
 // replacement when that stream is absent or points to video/subtitles.
-func (b Backend) ProbeStream(ctx context.Context, path string, index int) (Info, error) {
-	path, err := localFile(path)
+func (b Backend) ProbeStream(ctx context.Context, path string, index int) (result Info, err error) {
+	if index >= 0 {
+		ctx = diagnostic.WithStream(ctx, index)
+	}
+	err = probeWithRetry(ctx, path, func(ctx context.Context) error {
+		path, err = localFile(path)
+		if err != nil {
+			return err
+		}
+		info, probeErr := av.ProbeStream(ctx, path, index)
+		if probeErr != nil {
+			return probeErr
+		}
+		result = fromNative(path, info)
+		return nil
+	})
 	if err != nil {
 		return Info{}, err
 	}
-	info, err := av.ProbeStream(ctx, path, index)
-	if err != nil {
-		return Info{}, err
-	}
-	return fromNative(path, info), nil
+	return result, nil
 }
 
 // ValidateEAC3 lets UI preflight reuse the exact conversion policy.

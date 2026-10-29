@@ -22,6 +22,7 @@
       <button id="add" data-i18n="add"></button>
     </section>
     <div id="error" class="error" role="alert" hidden></div>
+    <div id="log-error" class="error" role="alert" hidden></div>
     <section class="panel">
       <div class="section-head"><h2 data-i18n="tracks"></h2><button id="clear" class="secondary" data-i18n="clear"></button></div>
       <p id="empty" class="muted" data-i18n="empty"></p>
@@ -69,13 +70,24 @@
       </div>
       <label class="overwrite"><input id="overwrite" type="checkbox"><span data-i18n="overwrite"></span></label>
       <p class="muted small" data-i18n="notice"></p>
+      <p class="muted small" data-i18n="integrityNotice"></p>
     </section>
     <section class="panel">
       <div class="section-head"><h2 data-i18n="queue"></h2><span id="summary" class="muted" aria-live="polite"></span></div>
       <progress id="progress" max="1" value="0" aria-label="Queue progress"></progress>
       <p id="activity" class="muted" aria-live="polite"></p>
       <ol id="jobs"></ol>
-      <div class="actions"><button id="start" data-i18n="start"></button><button id="cancel" class="secondary" disabled data-i18n="cancel"></button></div>
+      <div class="actions"><button id="start" data-i18n="start"></button><button id="cancel" class="secondary" disabled data-i18n="cancel"></button>
+        <button id="retry-failed" class="secondary" disabled data-i18n="retryFailed"></button>
+        <button id="view-logs" class="secondary" data-i18n="viewLogs"></button>
+      </div>
+    </section>
+    <section id="logs" class="panel" hidden>
+      <div class="section-head"><h2 data-i18n="logs"></h2><button id="close-logs" class="secondary" data-i18n="close"></button></div>
+      <p class="muted small" data-i18n="logNotice"></p>
+      <p id="log-path" class="file-path"></p>
+      <p id="log-truncated" class="muted small" data-i18n="logTruncated" hidden></p>
+      <pre id="log-content" tabindex="0"></pre>
     </section>
   </main>
   <footer class="build-info"><span id="app-version"></span><span id="app-copyright"></span></footer>

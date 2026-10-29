@@ -158,6 +158,7 @@ static int describe_stream(AVStream *stream, HDMAInfo *info)
 
 int hdma_probe_stream(const char *path, int index, uintptr_t handle, HDMAInfo *info, char *error)
 {
+    uintptr_t previous = hdma_log_enter(handle);
     Operation op = {.handle = handle};
     int ret = open_input(&op, path, index);
     if (ret >= 0)
@@ -165,6 +166,7 @@ int hdma_probe_stream(const char *path, int index, uintptr_t handle, HDMAInfo *i
     if (ret < 0)
         fail(error, op.stage, ret);
     close_operation(&op);
+    hdma_log_leave(previous);
     return ret;
 }
 
@@ -178,6 +180,7 @@ void hdma_tracks_free(HDMATrack *tracks) { av_free(tracks); }
 int hdma_probe_tracks(const char *path, uintptr_t handle, HDMATrack **tracks,
                       int *count, char *error)
 {
+    uintptr_t previous = hdma_log_enter(handle);
     Operation op = {.handle = handle};
     *tracks = NULL;
     *count = 0;
@@ -224,6 +227,7 @@ end:
         fail(error, op.stage, ret);
     }
     close_operation(&op);
+    hdma_log_leave(previous);
     return ret;
 }
 
@@ -480,6 +484,7 @@ static int receive_frames(Operation *op)
 int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
                  uintptr_t handle, char *error)
 {
+    uintptr_t previous = hdma_log_enter(handle);
     Operation op = {.handle = handle};
     AVPacket *packet = NULL;
     int ret = open_input(&op, path, expected->index);
@@ -552,5 +557,6 @@ end:
         fail(error, op.stage, ret);
     av_packet_free(&packet);
     close_operation(&op);
+    hdma_log_leave(previous);
     return ret;
 }

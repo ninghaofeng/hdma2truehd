@@ -19,6 +19,10 @@ typedef struct HDMAInfo {
 
 const char *hdma_version(void);
 int hdma_check(void);
+void hdma_init_logging(void);
+uintptr_t hdma_log_enter(uintptr_t handle);
+void hdma_log_leave(uintptr_t previous);
+const char *hdma_error_kind(int code);
 int hdma_probe(const char *path, uintptr_t handle, HDMAInfo *info, char *error);
 typedef struct HDMATrack {
     HDMAInfo info;

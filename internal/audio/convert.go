@@ -9,11 +9,13 @@ import (
 	"strings"
 
 	"github.com/ninghaofeng/hdma2truehd/internal/av"
+	"github.com/ninghaofeng/hdma2truehd/internal/diagnostic"
 )
 
 type Options struct {
 	// Progress runs synchronously on the conversion goroutine; keep it brief.
 	Progress  func(Progress)
+	Warning   func(diagnostic.Problem)
 	Overwrite bool
 	// StreamIndex selects a container stream explicitly; nil retains the
 	// single-stream input contract instead of guessing an MKV audio track.
@@ -35,13 +37,80 @@ type Result struct {
 	Lossy          bool
 	Validated      bool
 	DecodedSamples uint64
+	Warnings       []diagnostic.Problem
 }
 
 // Convert encodes to a private file, validates it and only then publishes it.
 // A codec or verification failure must not expose a partial final output.
 func (b Backend) Convert(ctx context.Context, input, output string, options Options) (result Result, err error) {
+	for attempt := 1; attempt <= 2; attempt++ {
+		work := diagnostic.WithJob(ctx, input, output, attempt)
+		work = context.WithValue(work, retryOwnedKey{}, true)
+		if options.StreamIndex != nil {
+			work = diagnostic.WithStream(work, *options.StreamIndex)
+		}
+		diagnostic.Emit(work, diagnostic.Event{Level: "info", Code: "attempt_start", Message: "Conversion attempt started"})
+		result, err = b.convert(work, input, output, options)
+		if err == nil {
+			diagnostic.Emit(work, diagnostic.Event{Level: "info", Code: "conversion_complete", Message: "Output verified as requested and published"})
+			return result, nil
+		}
+		problem := diagnostic.Describe(err)
+		diagnostic.Emit(work, diagnostic.Event{Level: "error", Code: problem.Code, Stage: problem.Stage, Message: problem.Detail})
+		if attempt == 2 || !problem.Retryable || ctx.Err() != nil {
+			return result, err
+		}
+		diagnostic.Emit(work, diagnostic.Event{Level: "warning", Code: "retrying", Message: "Temporary I/O failure; retrying the complete transaction once"})
+		if options.Warning != nil {
+			options.Warning(diagnostic.Problem{Code: "retrying", Stage: problem.Stage, Detail: problem.Detail})
+		}
+		if err := retryPause(ctx); err != nil {
+			return Result{}, err
+		}
+	}
+	return result, err
+}
+
+func (b Backend) convert(ctx context.Context, input, output string, options Options) (result Result, err error) {
 	progress := reporter{report: options.Progress}
-	progress.stage(ctx, "probe")
+	defer func() { err = diagnostic.Wrap(progress.current.Stage, err) }()
+	var warnings []diagnostic.Problem
+	seen := map[string]bool{}
+	warn := func(problem diagnostic.Problem) {
+		key := problem.Code + problem.Detail
+		if seen[key] {
+			return
+		}
+		if len(warnings) >= 20 {
+			if problem.Code == "duration_short" {
+				warnings[18] = problem
+				seen[key] = true
+				if options.Warning != nil {
+					options.Warning(problem)
+				}
+			}
+			if warnings[19].Code != "warnings_truncated" {
+				warnings[19] = diagnostic.Problem{Code: "warnings_truncated", Detail: "Additional diagnostics are available in the log; per-job display is limited to 20 warnings."}
+				if options.Warning != nil {
+					options.Warning(warnings[19])
+				}
+			}
+			return
+		}
+		seen[key] = true
+		warnings = append(warnings, problem)
+		if options.Warning != nil {
+			options.Warning(problem)
+		}
+	}
+	parent := ctx
+	ctx = diagnostic.WithSink(ctx, func(event diagnostic.Event) {
+		diagnostic.Emit(parent, event)
+		if event.Code == "ffmpeg" && (event.Level == "warning" || event.Level == "error") {
+			warn(diagnostic.Problem{Code: "ffmpeg_warning", Stage: event.Stage, Detail: event.Message})
+		}
+	})
+	ctx = progress.stage(ctx, "probe")
 	if err := b.Check(ctx); err != nil {
 		return Result{}, err
 	}
@@ -87,7 +156,7 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 			return Result{}, fmt.Errorf("output exists and is not a regular file")
 		}
 		if !options.Overwrite {
-			return Result{}, fmt.Errorf("output exists; use --overwrite explicitly: %s", output)
+			return Result{}, &diagnostic.Failure{Code: "output_exists", Cause: fmt.Errorf("output exists; use --overwrite explicitly: %s", output)}
 		}
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return Result{}, statErr
@@ -102,7 +171,7 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 		// Join cleanup errors into the named return even after publication;
 		// callers must not be told that leftover private files were cleaned.
 		if cleanupErr := os.RemoveAll(tempDir); cleanupErr != nil {
-			err = errors.Join(err, fmt.Errorf("clean up %s: %w", tempDir, cleanupErr))
+			err = &diagnostic.Failure{Code: "cleanup_failed", Cause: errors.Join(err, fmt.Errorf("clean up %s: %w", tempDir, cleanupErr))}
 		}
 	}()
 	temp := filepath.Join(tempDir, "output"+extension)
@@ -117,8 +186,12 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 		return Result{}, fmt.Errorf("encode: %w", err)
 	}
 	progress.finish()
-	progress.stage(ctx, "check_output")
-	encoded, err := b.Probe(ctx, temp)
+	if warning := durationWarning(progress.current.Seconds, progress.current.Duration); warning != nil {
+		warn(*warning)
+		diagnostic.Emit(ctx, diagnostic.Event{Level: "warning", Code: warning.Code, Stage: warning.Stage, Message: warning.Detail})
+	}
+	stageContext = progress.stage(ctx, "check_output")
+	encoded, err := b.Probe(stageContext, temp)
 	if err != nil {
 		return Result{}, err
 	}
@@ -161,6 +234,13 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
+	currentStat, err := os.Stat(source.Path)
+	if err != nil {
+		return Result{}, err
+	}
+	if !os.SameFile(inputStat, currentStat) || inputStat.Size() != currentStat.Size() || !inputStat.ModTime().Equal(currentStat.ModTime()) {
+		return Result{}, &diagnostic.Failure{Code: "source_changed", Cause: fmt.Errorf("source changed during conversion: %s", source.Path)}
+	}
 	progress.stage(ctx, "publish")
 	// Flush file contents before making the final name visible. This does not
 	// promise directory-entry durability across a sudden power failure.
@@ -184,5 +264,6 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 		return Result{}, fmt.Errorf("publish without overwriting (requires hard-link support): %w", err)
 	}
 	progress.finish()
+	result.Warnings = warnings
 	return result, nil
 }

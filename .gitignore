@@ -1,6 +1,7 @@
 /.backend/
 /bin/
 /dist/
+/logs/
 *.test
 *.exe
 *.thd

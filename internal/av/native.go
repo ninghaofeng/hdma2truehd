@@ -9,6 +9,7 @@ package av
 #cgo windows LDFLAGS: -static -lws2_32 -lbcrypt -lole32 -luuid
 #cgo linux LDFLAGS: -lpthread
 #include <stdlib.h>
+#include <libavutil/log.h>
 #include "native.h"
 */
 import "C"
@@ -20,13 +21,58 @@ import (
 	"io"
 	"runtime/cgo"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
+
+	"github.com/ninghaofeng/hdma2truehd/internal/diagnostic"
 )
 
 // Version rejects an accidentally linked stock/incompatible backend. The marker
 // identifies the required patches, but is not a cryptographic provenance check.
 const Version = "8.0.1-hdma2truehd-71-v3"
+
+var loggingOnce sync.Once
+var logContext = struct {
+	sync.RWMutex
+	ctx context.Context
+}{ctx: context.Background()}
+
+// SetLogContext records unscoped FFmpeg worker-thread messages without assigning
+// them to an arbitrary concurrent job. Operation-thread logs use their handle.
+func SetLogContext(ctx context.Context) {
+	logContext.Lock()
+	logContext.ctx = ctx
+	logContext.Unlock()
+}
+
+type NativeError struct {
+	Code   string
+	Number int
+	Detail string
+}
+
+func (e *NativeError) Error() string {
+	return fmt.Sprintf("FFmpeg library: %s (code %d)", e.Detail, e.Number)
+}
+func (e *NativeError) DiagnosticCode() string { return e.Code }
+
+//export hdmaGoLog
+func hdmaGoLog(handle C.uintptr_t, level C.int, message *C.char) {
+	var ctx context.Context
+	if handle != 0 {
+		ctx = cgo.Handle(handle).Value().(*operation).ctx
+	} else {
+		logContext.RLock()
+		ctx = logContext.ctx
+		logContext.RUnlock()
+	}
+	severity := "warning"
+	if level <= C.AV_LOG_ERROR {
+		severity = "error"
+	}
+	diagnostic.Emit(ctx, diagnostic.Event{Level: severity, Code: "ffmpeg", Message: strings.TrimSpace(C.GoString(message))})
+}
 
 type Info struct {
 	Index, Rate, Bits, Channels int
@@ -86,6 +132,7 @@ func hdmaGoPCM(handle C.uintptr_t, data *C.uchar, size C.int) C.int {
 }
 
 func Check(ctx context.Context) error {
+	loggingOnce.Do(func() { C.hdma_init_logging() })
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -117,6 +164,9 @@ func nativeMetadata(info C.HDMAInfo) Info {
 }
 
 func probeStream(ctx context.Context, path string, index int) (Info, error) {
+	if index >= 0 {
+		ctx = diagnostic.WithStream(ctx, index)
+	}
 	if err := Check(ctx); err != nil {
 		return Info{}, err
 	}
@@ -141,6 +191,7 @@ func probeStream(ctx context.Context, path string, index int) (Info, error) {
 // A nonempty output encodes TrueHD; an empty output streams normalized PCM to
 // out. This low-level entry point does not perform transactional publication.
 func Process(ctx context.Context, path, output string, expected Info, out io.Writer) error {
+	ctx = diagnostic.WithStream(ctx, expected.Index)
 	if err := Check(ctx); err != nil {
 		return err
 	}
@@ -194,7 +245,7 @@ func result(op *operation, ret C.int, message *C.char) error {
 		return errors.Join(op.ctx.Err(), op.err)
 	}
 	if ret < 0 {
-		return fmt.Errorf("FFmpeg library: %s", C.GoString(message))
+		return &NativeError{Code: C.GoString(C.hdma_error_kind(ret)), Number: int(ret), Detail: C.GoString(message)}
 	}
 	return nil
 }

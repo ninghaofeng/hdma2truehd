@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"github.com/ninghaofeng/hdma2truehd/internal/audio"
+	"github.com/ninghaofeng/hdma2truehd/internal/av"
 	"github.com/ninghaofeng/hdma2truehd/internal/batch"
 	"github.com/ninghaofeng/hdma2truehd/internal/buildinfo"
+	"github.com/ninghaofeng/hdma2truehd/internal/diagnostic"
 )
 
 const help = "hdma2truehd " + buildinfo.Version + "\n" + buildinfo.Copyright + `
@@ -51,11 +53,50 @@ No upmixing, downmixing, resampling, Atmos, or MKV output/remuxing.
 `
 
 func main() {
+	os.Exit(mainRun())
+}
+
+func mainRun() int {
 	// Signal cancellation reaches FFmpeg's I/O interrupt and frame-processing
 	// checks; per-operation cleanup runs before run returns its exit code.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
+	directory, err := diagnostic.ProgramDirectory()
+	var recorder *diagnostic.Recorder
+	if err == nil {
+		recorder, err = diagnostic.Open(directory)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: Cannot save diagnostic logs beside the application: %v\n", err)
+	}
+	logUnavailable := err != nil
+	var diagnostics io.Writer = os.Stderr
+	if recorder != nil {
+		ctx = diagnostic.WithSink(ctx, recorder.Record)
+		diagnostics = io.MultiWriter(os.Stderr, diagnostic.LogWriter{Recorder: recorder})
+		fmt.Fprintf(os.Stderr, "Diagnostic log: %s\n", recorder.Path())
+	}
+	av.SetLogContext(ctx)
+	diagnostic.Emit(ctx, diagnostic.Event{Level: "info", Code: "application_start", Message: fmt.Sprintf("Version %s; backend %s; %s/%s", buildinfo.Version, audio.BackendVersion, runtime.GOOS, runtime.GOARCH)})
+	if directory, err := os.Getwd(); err == nil {
+		diagnostic.Emit(ctx, diagnostic.Event{Level: "info", Code: "working_directory", Message: directory})
+	} else {
+		diagnostic.Emit(ctx, diagnostic.Event{Level: "warning", Code: "working_directory", Message: err.Error()})
+	}
+	code := run(ctx, os.Args[1:], os.Stdout, diagnostics)
+	if logUnavailable && code == 0 {
+		code = 1
+	}
+	if recorder != nil {
+		diagnostic.Emit(ctx, diagnostic.Event{Level: "info", Code: "session_end", Message: fmt.Sprintf("CLI exit code: %d", code)})
+		if err := recorder.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Diagnostic logging failed: %v\n", err)
+			if code == 0 {
+				code = 1
+			}
+		}
+	}
+	return code
 }
 
 func run(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -185,6 +226,7 @@ func processJobs(ctx context.Context, jobs []job, options audio.Options, concurr
 	// Progress/diagnostics stay on stderr; stdout reports final per-file results
 	// and totals. One failed job does not prevent independent later jobs.
 	fmt.Fprintln(errOut, "NOTE: PCM verification covers decoded compatible channels only; DTS:X objects are not rendered and object metadata is not retained.")
+	fmt.Fprintln(errOut, "NOTE: Without a trusted original length/checksum, source completeness is unconfirmed. Suspected truncation produces warnings; confirmed decoding/verification errors block publication.")
 	for _, job := range jobs {
 		if strings.EqualFold(filepath.Ext(job.output), ".eac3") {
 			fmt.Fprintln(errOut, "NOTE: E-AC-3 is LOSSY; validation is strict decoding plus format/length checks, not lossless PCM equality. Raw output has 256 samples of delay and frame padding. Outputs are published independently.")
@@ -199,6 +241,14 @@ func processJobs(ctx context.Context, jobs []job, options audio.Options, concurr
 		fmt.Fprintf(errOut, "[%d/%d] %s -> %s (encode%s)\n", i+1, len(jobs), job.input, job.output, verificationLabel(options.SkipVerify, strings.EqualFold(filepath.Ext(job.output), ".eac3")))
 		mu.Unlock()
 		jobOptions := options
+		jobOptions.Warning = func(problem diagnostic.Problem) {
+			mu.Lock()
+			defer mu.Unlock()
+			if options.Warning != nil {
+				options.Warning(problem)
+			}
+			fmt.Fprintf(errOut, "WARNING [%d/%d] %s [%s]: %s\n", i+1, len(jobs), job.output, problem.Code, problem.Detail)
+		}
 		var lastProgress time.Time
 		var lastStage string
 		jobOptions.Progress = func(p audio.Progress) {

@@ -2,9 +2,11 @@ package audio
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ninghaofeng/hdma2truehd/internal/av"
+	"github.com/ninghaofeng/hdma2truehd/internal/diagnostic"
 )
 
 type Progress struct {
@@ -26,7 +28,8 @@ func (r *reporter) stage(ctx context.Context, stage string) context.Context {
 	r.started = time.Now()
 	r.current = Progress{Stage: stage}
 	r.send()
-	return av.WithProgress(ctx, func(p av.Progress) {
+	diagnostic.Emit(ctx, diagnostic.Event{Level: "info", Code: "stage_start", Stage: stage, Message: "Conversion stage started"})
+	return av.WithProgress(diagnostic.WithStage(ctx, stage), func(p av.Progress) {
 		if p.Rate > 0 {
 			r.current.Seconds = float64(p.Samples) / float64(p.Rate)
 		}
@@ -51,4 +54,12 @@ func (r *reporter) finish() {
 	r.current.Done = true
 	r.current.Fraction = 1
 	r.send()
+}
+
+func durationWarning(seconds, duration float64) *diagnostic.Problem {
+	if duration <= 0 || seconds <= 0 || duration-seconds <= max(2, duration*.02) {
+		return nil
+	}
+	return &diagnostic.Problem{Code: "duration_short", Stage: "encode",
+		Detail: fmt.Sprintf("Decoded %.3fs; metadata estimates %.3fs. The source may be incomplete or its metadata inaccurate; this is not proof of truncation.", seconds, duration)}
 }

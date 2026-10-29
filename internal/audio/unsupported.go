@@ -7,4 +7,5 @@ type UnsupportedError struct {
 	Message string
 }
 
-func (e *UnsupportedError) Error() string { return e.Message }
+func (e *UnsupportedError) Error() string          { return e.Message }
+func (e *UnsupportedError) DiagnosticCode() string { return "unsupported_" + e.Code }
