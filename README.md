@@ -147,7 +147,8 @@ restart header、声道顺序和极短输入 flush。库版本在运行时检查
 建议按以下顺序阅读；源码注释重点解释数据约定、资源所有权和失败边界：
 
 1. [`cmd/hdma2truehd/main.go`](cmd/hdma2truehd/main.go)：参数解析、整批路径冲突
-   预检查、逐文件执行及退出码。单个文件失败后继续后续任务，取消则停止。
+   预检查、并行任务执行及退出码。单项失败不影响其他任务；取消停止领取新任务，
+   并等待已启动任务清理。
 2. [`internal/audio/convert.go`](internal/audio/convert.go)：转换事务主线，
    即“探测并验证输入 → 同文件系统临时编码 → 输出格式检查 → 完整 PCM 比较
    → 发布”。未显式允许覆盖时，用硬链接创建最终名称，避免检查后的竞争覆盖。
@@ -171,6 +172,18 @@ restart header、声道顺序和极短输入 flush。库版本在运行时检查
    注释说明快照所有权、修订号排序、取消/关闭等待及按声道布局保存码率的约束。
    [`tests/build/`](tests/build/) 使用隔离目录和模拟编译器验证构建/清理流程，
    不将这些测试视作原生编译或音频保真的证明。
+8. [`internal/batch/batch.go`](internal/batch/batch.go)：CLI 与桌面共享的有界调度器，
+   仅负责领取任务和等待退出；单项结果、取消状态和错误汇总由调用方维护。
+9. [`internal/diagnostic/error.go`](internal/diagnostic/error.go)、
+   [`internal/diagnostic/log.go`](internal/diagnostic/log.go) 与
+   [`internal/av/logging.c`](internal/av/logging.c)：稳定错误码、上下文日志归属、
+   本地日志轮转与原生警告捕获。前端按错误码翻译概要，保留原始技术详情。
+   [`internal/audio/retry.go`](internal/audio/retry.go) 协调重试预算：
+   独立探测可重试一次，转换内部探测不另行重试，临时 I/O 才可重做完整事务。
+
+维护时注意三个边界：原生操作结束不等于上层阶段成功；PCM 相等不证明源文件完整；
+发布后清理失败仍是错误，最终输出此时可能已经存在。对应约束在进度、事务和诊断
+代码处就近注释，不能通过强制显示完成、忽略清理错误或盲目重试绕过。
 
 E-AC-3 分支见 [`internal/audio/eac3.go`](internal/audio/eac3.go) 和
 [`internal/av/eac3.c`](internal/av/eac3.c)：独立/依赖子流同步编码、声道替换映射、
@@ -754,8 +767,9 @@ Read in the following order. Source comments focus on data contracts, resource
 ownership and failure boundaries:
 
 1. [`cmd/hdma2truehd/main.go`](cmd/hdma2truehd/main.go): argument parsing,
-   batch-wide path-conflict checks, per-file execution and exit codes.
-   A file failure allows later jobs to continue; cancellation stops the batch.
+   batch-wide path-conflict checks, parallel job execution and exit codes.
+   A job failure leaves other jobs independent; cancellation stops new claims
+   and waits for active jobs to clean up.
 2. [`internal/audio/convert.go`](internal/audio/convert.go): the conversion
    transaction: probe/validate input, encode to a temporary file on the same
    filesystem, check output metadata, compare complete PCM, then publish.
@@ -785,6 +799,24 @@ ownership and failure boundaries:
    revision ordering, cancellation/shutdown waits and per-layout bitrate capture.
    [`tests/build/`](tests/build/) uses isolated directories and stub compilers to
    test build/cleanup orchestration, not native compilation or audio fidelity.
+8. [`internal/batch/batch.go`](internal/batch/batch.go): the bounded scheduler
+   shared by CLI and desktop. It owns job claiming and waiting; callers own
+   individual results, cancellation status and error summaries.
+9. [`internal/diagnostic/error.go`](internal/diagnostic/error.go),
+   [`internal/diagnostic/log.go`](internal/diagnostic/log.go) and
+   [`internal/av/logging.c`](internal/av/logging.c): stable error codes, scoped
+   log attribution, local log rotation and native warning capture. The frontend
+   localizes summaries by code while retaining original technical details.
+   [`internal/audio/retry.go`](internal/audio/retry.go) coordinates retry budgets:
+   standalone probes may retry once; probes inside conversion do not retry
+   independently, and only temporary I/O permits a fresh full transaction.
+
+Keep three boundaries in mind: a native operation ending does not complete its
+audio stage; PCM equality does not prove source completeness; and cleanup failure
+after publication is still an error even though the final output may exist.
+Comments beside progress, transaction and diagnostic code explain these
+constraints; do not bypass them by forcing completion, ignoring cleanup errors
+or retrying blindly.
 
 The E-AC-3 branch in [`internal/audio/eac3.go`](internal/audio/eac3.go) and
 [`internal/av/eac3.c`](internal/av/eac3.c) handles synchronized independent/dependent

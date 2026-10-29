@@ -370,6 +370,8 @@ func (s *Service) Start(ctx context.Context, req Request) (State, error) {
 	return s.startLocked(ctx, req, jobs), nil
 }
 
+// startLocked requires mu and installs run ownership before launching workers.
+// Retry supplies the full history, with only failed jobs reset to pending.
 func (s *Service) startLocked(ctx context.Context, req Request, jobs []Job) State {
 	work, cancel := context.WithCancel(ctx)
 	s.cancel = cancel
@@ -382,6 +384,8 @@ func (s *Service) startLocked(ctx context.Context, req Request, jobs []Job) Stat
 	return state
 }
 
+// RetryFailed replans failed outputs under the original settings. Successful
+// and cancelled jobs remain history; retries never bypass overwrite protection.
 func (s *Service) RetryFailed(ctx context.Context) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -389,6 +393,8 @@ func (s *Service) RetryFailed(ctx context.Context) (State, error) {
 		return State{}, fmt.Errorf("cannot retry while conversions are running")
 	}
 	jobs := append([]Job{}, s.state.Jobs...)
+	// Per-job replanning sees only that job's input. Protect every original
+	// input too, including aliases belonging to jobs that will not be retried.
 	sources := map[string]bool{}
 	var sourceFiles []os.FileInfo
 	for _, selection := range s.request.Tracks {
@@ -449,6 +455,8 @@ func (s *Service) RetryFailed(ctx context.Context) (State, error) {
 	if !found {
 		return State{}, fmt.Errorf("no failed jobs to retry")
 	}
+	// Commit the replacement queue only after every retry passes preflight;
+	// a late planning failure must not partially reset the displayed history.
 	diagnostic.Emit(ctx, diagnostic.Event{Level: "info", Code: "manual_retry", Message: "Retrying failed jobs only; preserving successful and cancelled jobs"})
 	return s.startLocked(ctx, s.request, jobs), nil
 }
@@ -483,6 +491,8 @@ func (s *Service) run(ctx context.Context, req Request, done chan struct{}) {
 		})
 	}()
 	err := batch.Run(ctx, len(s.State().Jobs), req.Concurrency, func(i int) {
+		// Manual retry keeps terminal jobs in this same list. Only pending
+		// entries may execute; successful outputs must never be encoded again.
 		if s.State().Jobs[i].Status != "pending" {
 			return
 		}

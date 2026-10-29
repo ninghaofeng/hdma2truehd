@@ -42,6 +42,8 @@ func (a *App) Inspect(paths []string) ([]gui.Input, error) {
 	return inputs, a.failure("probe", err)
 }
 
+// failure is the RPC error boundary: log the original cause, then preserve its
+// code/detail as JSON through Wails' string-only rejection channel.
 func (a *App) failure(stage string, err error) error {
 	if err == nil {
 		return nil

@@ -9,6 +9,8 @@ import (
 	"github.com/ninghaofeng/hdma2truehd/internal/diagnostic"
 )
 
+// Progress is a snapshot of one stage, not a weighted whole-job percentage.
+// Fraction is an estimate; Done is set only when the audio layer finishes it.
 type Progress struct {
 	Stage    string  `json:"stage"`
 	Seconds  float64 `json:"seconds"`
@@ -39,6 +41,8 @@ func (r *reporter) stage(ctx context.Context, stage string) context.Context {
 			// Metadata may underestimate length; reserve 100% for actual completion.
 			r.current.Fraction = min(r.current.Seconds/p.Duration, .99)
 		}
+		// Native Done can mean source decoding ended while E-AC-3 still has
+		// encoder delay/padding to flush. Only finish may complete this stage.
 		r.send()
 	})
 }
@@ -56,6 +60,8 @@ func (r *reporter) finish() {
 	r.send()
 }
 
+// durationWarning is advisory: container estimates can be inaccurate, and a
+// cleanly truncated stream can still pass PCM equality against its decoded source.
 func durationWarning(seconds, duration float64) *diagnostic.Problem {
 	if duration <= 0 || seconds <= 0 || duration-seconds <= max(2, duration*.02) {
 		return nil

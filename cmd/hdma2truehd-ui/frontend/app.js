@@ -100,6 +100,8 @@ function showError(error) {
 
 function clearError() { lastError = null; $("error").hidden = true; $("error").textContent = ""; }
 
+// Queue snapshots carry objects; Wails RPC rejections carry JSON strings.
+// Preserve non-JSON runtime errors as technical detail rather than hiding them.
 function normalizeProblem(error) {
   if (typeof error?.code === "string") return error;
   const detail = String(error?.message || error);
@@ -162,6 +164,8 @@ function appendProblem(parent, error, warning = false) {
   }
 }
 
+// Compatibility follows the currently requested formats. A general source
+// failure blocks both; E-AC-3-only failure must not block TrueHD on its own.
 function trackProblem(track) {
   const info = track.info;
   const stream = info.stream;
@@ -377,6 +381,8 @@ $("retry-failed").addEventListener("click", async () => {
   clearError();
   busy = true;
   renderInputs(); renderState();
+  // The backend owns history and fresh preflight; rebuilding Start from the
+  // current selection could re-encode successes or change original settings.
   try { acceptState(await backend.RetryFailed()); }
   catch (error) { showError(error); }
   finally { busy = false; renderInputs(); renderState(); }

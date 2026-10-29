@@ -14,7 +14,9 @@ import (
 
 type Options struct {
 	// Progress runs synchronously on the conversion goroutine; keep it brief.
-	Progress  func(Progress)
+	Progress func(Progress)
+	// Warning also runs synchronously and may report a failed attempt before
+	// a retry. Result.Warnings is scoped to the attempt producing that result.
 	Warning   func(diagnostic.Problem)
 	Overwrite bool
 	// StreamIndex selects a container stream explicitly; nil retains the
@@ -45,6 +47,8 @@ type Result struct {
 func (b Backend) Convert(ctx context.Context, input, output string, options Options) (result Result, err error) {
 	for attempt := 1; attempt <= 2; attempt++ {
 		work := diagnostic.WithJob(ctx, input, output, attempt)
+		// Nested probes share this transaction's retry budget. Retrying them
+		// independently would multiply attempts and reuse partly completed work.
 		work = context.WithValue(work, retryOwnedKey{}, true)
 		if options.StreamIndex != nil {
 			work = diagnostic.WithStream(work, *options.StreamIndex)
@@ -57,6 +61,8 @@ func (b Backend) Convert(ctx context.Context, input, output string, options Opti
 		}
 		problem := diagnostic.Describe(err)
 		diagnostic.Emit(work, diagnostic.Event{Level: "error", Code: problem.Code, Stage: problem.Stage, Message: problem.Detail})
+		// The attempt has already cleaned its staging directory. Only explicit
+		// temporary I/O permits a fresh transaction; never resume partial output.
 		if attempt == 2 || !problem.Retryable || ctx.Err() != nil {
 			return result, err
 		}
@@ -82,6 +88,8 @@ func (b Backend) convert(ctx context.Context, input, output string, options Opti
 			return
 		}
 		if len(warnings) >= 20 {
+			// Reserve the last slots for a useful integrity warning and the
+			// truncation notice; the diagnostic sink still receives every event.
 			if problem.Code == "duration_short" {
 				warnings[18] = problem
 				seen[key] = true
@@ -105,6 +113,8 @@ func (b Backend) convert(ctx context.Context, input, output string, options Opti
 	}
 	parent := ctx
 	ctx = diagnostic.WithSink(ctx, func(event diagnostic.Event) {
+		// Forward to the original sink, not this replacement sink, to avoid
+		// recursion and retain raw logs beyond the per-job display limit.
 		diagnostic.Emit(parent, event)
 		if event.Code == "ffmpeg" && (event.Level == "warning" || event.Level == "error") {
 			warn(diagnostic.Problem{Code: "ffmpeg_warning", Stage: event.Stage, Detail: event.Message})
@@ -238,6 +248,8 @@ func (b Backend) convert(ctx context.Context, input, output string, options Opti
 	if err != nil {
 		return Result{}, err
 	}
+	// Catch common mutations across the separate encode/verify reads. This
+	// stat snapshot is not a content fingerprint or proof of source completeness.
 	if !os.SameFile(inputStat, currentStat) || inputStat.Size() != currentStat.Size() || !inputStat.ModTime().Equal(currentStat.ModTime()) {
 		return Result{}, &diagnostic.Failure{Code: "source_changed", Cause: fmt.Errorf("source changed during conversion: %s", source.Path)}
 	}

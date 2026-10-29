@@ -1,3 +1,5 @@
+// Package batch shares bounded scheduling between CLI and desktop callers.
+// It owns job claiming, not job results or conversion failure policy.
 package batch
 
 import (
@@ -20,6 +22,7 @@ func ValidateConcurrency(n int) error {
 
 // Run bounds active calls, stops claiming jobs on cancellation, and waits for
 // all active calls to finish cleanup. Individual failures belong to work.
+// A nil return means scheduling finished, not that jobs succeeded or ctx is live.
 func Run(ctx context.Context, count, concurrency int, work func(int)) error {
 	if err := ValidateConcurrency(concurrency); err != nil {
 		return err
@@ -36,6 +39,8 @@ func Run(ctx context.Context, count, concurrency int, work func(int)) error {
 			defer workers.Done()
 			for {
 				mu.Lock()
+				// Claim indices once and in order, without holding the scheduler
+				// lock during work. Execution/completion order is not guaranteed.
 				if ctx.Err() != nil || next == count {
 					mu.Unlock()
 					return

@@ -33,6 +33,8 @@ func (w LogWriter) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
+// scope is copied into derived contexts so parallel jobs cannot overwrite each
+// other's attribution. A shared sink must itself support concurrent calls.
 type scope struct {
 	sink        func(Event)
 	input       string
@@ -48,6 +50,8 @@ func getScope(ctx context.Context) scope {
 	return value
 }
 
+// WithSink replaces, rather than chains, the sink. Interceptors must explicitly
+// forward to the parent context when records should reach the original sink.
 func WithSink(ctx context.Context, sink func(Event)) context.Context {
 	value := getScope(ctx)
 	value.sink = sink
@@ -72,6 +76,8 @@ func WithStream(ctx context.Context, index int) context.Context {
 	return context.WithValue(ctx, scopeKey{}, value)
 }
 
+// Emit fills absent fields from context while preserving explicit attribution.
+// Delivery is synchronous; callers must not hold locks needed by their sink.
 func Emit(ctx context.Context, event Event) {
 	value := getScope(ctx)
 	if value.sink == nil {
@@ -123,6 +129,8 @@ func programDirectory(executable string) string {
 	return dir
 }
 
+// Recorder serializes rotation, writes, reads and close for one launch. The
+// first write failure is sticky so later UI snapshots/CLI exit cannot hide it.
 type Recorder struct {
 	mu    sync.Mutex
 	path  string
@@ -216,6 +224,8 @@ type View struct {
 	Problem   *Problem `json:"problem,omitempty"`
 }
 
+// Read returns a bounded text tail, not necessarily complete JSONL records.
+// A sticky write error remains visible in Problem even if old text is readable.
 func (r *Recorder) Read() (View, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

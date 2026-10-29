@@ -317,6 +317,8 @@ static int eac3_finish(HDMAEAC3 *op, uint64_t *samples, uint64_t *decoded, char 
     return 0;
 }
 
+/* Scope each entry point rather than the encoder's entire lifetime: calls are
+ * synchronous, but successive writes can run on different native threads. */
 int hdma_eac3_open(const char *path, int channels, int bitrate,
                    uintptr_t handle, HDMAEAC3 **result, char *error)
 {

@@ -71,6 +71,8 @@ func generate(directory string) error {
 
 func windowsResource(filename string) string {
 	var out strings.Builder
+	// PE numeric versions require four integer components, unlike the v-prefixed
+	// release tag. The fourth component is reserved as zero for these releases.
 	numeric := strings.ReplaceAll(buildinfo.NumericVersion(), ".", ",") + ",0"
 	fmt.Fprintf(&out, `#include <windows.h>
 1 VERSIONINFO

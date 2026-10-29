@@ -56,6 +56,8 @@ func main() {
 	os.Exit(mainRun())
 }
 
+// mainRun returns before main calls os.Exit, allowing cancellation and recorder
+// cleanup to run; defers placed directly in main would be skipped by os.Exit.
 func mainRun() int {
 	// Signal cancellation reaches FFmpeg's I/O interrupt and frame-processing
 	// checks; per-operation cleanup runs before run returns its exit code.
@@ -233,6 +235,8 @@ func processJobs(ctx context.Context, jobs []job, options audio.Options, concurr
 			break
 		}
 	}
+	// Serialize output, counters and forwarded callbacks, not codec work.
+	// Each job below retains its own progress throttle and option callbacks.
 	var mu sync.Mutex
 	succeeded, failed, unverified := 0, 0, 0
 	err := batch.Run(ctx, len(jobs), concurrency, func(i int) {

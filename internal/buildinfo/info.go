@@ -23,6 +23,8 @@ type Info struct {
 	MinimumSystem string `json:"minimumSystem"`
 }
 
+// Current reports the release support policy for the compiled target. It does
+// not inspect the host OS version or enforce a runtime compatibility gate.
 func Current() Info {
 	minimum := "Not a release target"
 	if runtime.GOOS == "darwin" {

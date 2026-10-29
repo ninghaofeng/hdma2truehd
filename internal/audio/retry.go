@@ -7,6 +7,8 @@ import (
 	"github.com/ninghaofeng/hdma2truehd/internal/diagnostic"
 )
 
+// retryOwnedKey marks contexts whose outer conversion owns the retry budget;
+// standalone metadata inspection has its own single retry instead.
 type retryOwnedKey struct{}
 
 func retryPause(ctx context.Context) error {

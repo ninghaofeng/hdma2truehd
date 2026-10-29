@@ -8,7 +8,8 @@ type Progress struct {
 	Samples  uint64
 	Rate     int
 	Duration float64
-	Done     bool
+	// Done completes this native operation, not necessarily its audio stage.
+	Done bool
 }
 
 type progressKey struct{}

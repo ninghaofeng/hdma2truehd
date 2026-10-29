@@ -1,3 +1,5 @@
+// Package diagnostic carries machine-readable failures and scoped local logs
+// shared by the audio backend, CLI and desktop application.
 package diagnostic
 
 import (
@@ -8,6 +10,8 @@ import (
 	"syscall"
 )
 
+// Problem separates stable policy/localization codes from raw technical detail.
+// Retryable is derived by Describe, not inferred from error message text.
 type Problem struct {
 	Code      string `json:"code"`
 	Stage     string `json:"stage,omitempty"`
@@ -15,6 +19,8 @@ type Problem struct {
 	Retryable bool   `json:"retryable,omitempty"`
 }
 
+// Failure adds stage or policy context without losing errors.Is/As access to
+// Cause. An empty Code lets Describe classify the underlying failure.
 type Failure struct {
 	Code  string
 	Stage string
@@ -42,6 +48,8 @@ func Describe(err error) *Problem {
 	}
 	var code interface{ DiagnosticCode() string }
 	failureCode := explicitCode(err)
+	// Explicit policy/cleanup failures outrank wrapped native or OS causes:
+	// a temporary cause must not make unsafe cleanup/publication retryable.
 	switch {
 	case failureCode != "":
 		p.Code = failureCode
@@ -77,10 +85,14 @@ func Describe(err error) *Problem {
 			p.Code = "preflight_failed"
 		}
 	}
+	// Generic EIO is not evidence of a transient failure. Publication is never
+	// retried automatically because the final name may already be visible.
 	p.Retryable = p.Code == "temporary_io" && p.Stage != "publish"
 	return p
 }
 
+// explicitCode traverses joined cleanup/original errors as well as ordinary
+// wrappers; the outer stage-only Failure must not hide an inner policy code.
 func explicitCode(err error) string {
 	if failure, ok := err.(*Failure); ok && failure.Code != "" {
 		return failure.Code

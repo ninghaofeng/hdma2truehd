@@ -8,10 +8,15 @@
 #include <libavutil/log.h>
 
 extern void hdmaGoLog(uintptr_t handle, int level, char *message);
+/* Attribution belongs to the synchronous calling thread, not global FFmpeg
+ * state. Worker threads without a scope keep handle zero instead of borrowing
+ * another parallel job's handle. */
 static _Thread_local uintptr_t log_handle;
 
 uintptr_t hdma_log_enter(uintptr_t handle)
 {
+    /* A decoder's Go PCM callback can reenter C to encode E-AC-3. Restore the
+     * previous handle on return so subsequent decoder logs retain attribution. */
     uintptr_t previous = log_handle;
     log_handle = handle;
     return previous;
@@ -23,6 +28,8 @@ static void capture_log(void *ptr, int level, const char *format, va_list args)
 {
     if (level > av_log_get_level())
         return;
+    /* Each consumer needs its own va_list copy: formatting consumes it. Keep
+     * normal stderr diagnostics while forwarding warnings/errors to Go. */
     va_list copy;
     va_copy(copy, args);
     av_log_default_callback(ptr, level, format, copy);
