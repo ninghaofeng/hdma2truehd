@@ -480,6 +480,8 @@ TrueHD 默认校验会另外完整解码源文件和输出文件，因此需要�
   无法归属到具体任务的 FFmpeg 内部线程消息作为全局诊断记录。
   每个会话最多保留两段各 **5 MiB**，前一段使用 `.1` 后缀；旧会话不自动删除。
   界面“查看日志”显示最新 **128 KiB** 并标记截取，可再次点击刷新；
+  以易读文本展示本机时间、等级、阶段、消息和任务上下文，警告为橙色、错误为红色；
+  磁盘文件仍为 JSONL。截断的首条不完整记录会明确提示，其他无法解析的记录保留原文。
   分享诊断前请检查文件路径等个人信息。日志不会上传。
 - 在发布前复查源文件身份、大小与修改时间，发现变化则阻止发布。
   实际解码时长比元数据短超过 **2 秒和元数据时长的 2%** 时发出疑似不完整警告，
@@ -1228,6 +1230,10 @@ Exit codes: `0` success, `1` processing or diagnostic-log failure,
   Each session retains up to two **5 MiB** segments; the older has a `.1` suffix.
   Previous sessions are not deleted automatically. **View logs** displays the
   latest **128 KiB**, labels truncation and can be clicked again to refresh.
+  The viewer formats local time, severity, stage, message and job context as
+  readable text, with orange warnings and red errors; on-disk files remain JSONL.
+  An incomplete first record is explicitly noted; other unparseable records retain
+  their original text.
   Logs are never uploaded; review personal file paths before sharing them.
 - Before publication, source identity, size and modification time are checked
   again; a detected change blocks publication. Decoded duration shorter than

@@ -9,7 +9,11 @@ const translations = {
     concurrency: "并行任务数",
     retryFailed: "重试失败任务", viewLogs: "查看日志", logs: "诊断日志", close: "关闭",
     technical: "技术详情", warning: "警告", logTruncated: "仅显示最新 128 KiB；更早记录请查看日志文件及同名 .1 文件。",
-    logNotice: "日志仅保存在程序旁的 logs 目录，含文件路径和原始诊断信息，不上传。每次启动单独记录，单次最多保留两段各 5 MiB；旧会话不会自动删除。再次点击“查看日志”可刷新。",
+    logNotice: "界面以本机时间展示易读文本，原始文件仍为 JSONL。日志仅保存在程序旁的 logs 目录，含文件路径和原始诊断信息，不上传。每次启动单独记录，单次最多保留两段各 5 MiB；旧会话不会自动删除。再次点击“查看日志”可刷新。",
+    logInfo: "信息", logError: "错误", logDebug: "调试", logTrace: "跟踪", logRecord: "日志",
+    logInput: "输入", logOutput: "输出", logStream: "音轨", logAttempt: "尝试",
+    logEmpty: "暂无诊断记录。", logUnparsed: "无法解析的日志记录（保留原始内容）：",
+    logPartial: "开头的日志记录因截断不完整，已省略；完整内容请查看原始日志文件。",
     integrityNotice: "源文件完整性未确认：没有可信的原始长度或校验值时，无法保证识别所有截断。可疑时长会警告，确认的解码或校验错误仍阻止输出。",
     parallelNotice: "默认同时处理 2 项任务，可选 1–8；1 为串行。同一文件的音轨和输出格式也可并行，较高并行数会增加 CPU、内存与磁盘负载。",
     bitrate51: "E-AC-3 5.1 码率", auto51: "自动：960 kb/s",
@@ -38,7 +42,11 @@ const translations = {
     concurrency: "Parallel jobs",
     retryFailed: "Retry failed jobs", viewLogs: "View logs", logs: "Diagnostic logs", close: "Close",
     technical: "Technical details", warning: "Warning", logTruncated: "Showing the latest 128 KiB. Earlier records are in the log file and its .1 segment.",
-    logNotice: "Logs remain in the logs directory beside the application, include file paths and raw diagnostics, and are never uploaded. Each launch keeps up to two 5 MiB segments; older sessions are not deleted automatically. Click View logs again to refresh.",
+    logNotice: "The viewer shows readable text in local time; original files remain JSONL. Logs remain in the logs directory beside the application, include file paths and raw diagnostics, and are never uploaded. Each launch keeps up to two 5 MiB segments; older sessions are not deleted automatically. Click View logs again to refresh.",
+    logInfo: "INFO", logError: "ERROR", logDebug: "DEBUG", logTrace: "TRACE", logRecord: "LOG",
+    logInput: "Input", logOutput: "Output", logStream: "Track", logAttempt: "Attempt",
+    logEmpty: "No diagnostic records yet.", logUnparsed: "Cannot parse log record (original content retained):",
+    logPartial: "The first record is incomplete due to truncation and was omitted. See the original log file for its full content.",
     integrityNotice: "Source completeness is unconfirmed: without a trusted original length/checksum, not every truncation can be detected. Suspicious duration produces warnings; confirmed decoding/verification errors still block publication.",
     parallelNotice: "Default: 2 concurrent jobs, adjustable from 1–8; 1 is serial. Tracks and formats from the same file may run concurrently. Higher concurrency increases CPU, memory and disk load.",
     bitrate51: "E-AC-3 5.1 bitrate", auto51: "Automatic: 960 kb/s",
@@ -72,6 +80,7 @@ let busy = false;
 let cancelling = false;
 let backend = null;
 let lastError = null;
+let logView = null;
 const t = (key) => translations[language][key];
 // Tuple serialization avoids delimiter collisions with arbitrary file paths,
 // including Windows drive letters. The index remains the container's index.
@@ -340,14 +349,62 @@ function renderState() {
   $("jobs").replaceChildren(fragment);
 }
 
+function renderLogs() {
+  if (!logView) return;
+  $("log-path").textContent = logView.path;
+  $("log-truncated").hidden = !logView.truncated;
+  const fragment = document.createDocumentFragment();
+  const timeFormat = new Intl.DateTimeFormat(language === "zh" ? "zh-CN" : "en-GB", {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+    second: "2-digit", fractionalSecondDigits: 3, hourCycle: "h23"
+  });
+  const levels = {info: t("logInfo"), warning: t("warning"), error: t("logError"),
+    debug: t("logDebug"), trace: t("logTrace")};
+  for (const [index, line] of logView.content.split(/\r?\n/).entries()) {
+    if (!line.trim()) continue;
+    let event = null;
+    try { event = JSON.parse(line); }
+    catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+    const valid = event && typeof event === "object" && !Array.isArray(event) &&
+      ["time", "level", "code", "message"].every(key => typeof event[key] === "string") &&
+      ["stage", "input", "output"].every(key => event[key] === undefined || typeof event[key] === "string") &&
+      ["streamIndex", "attempt"].every(key => event[key] === undefined || Number.isSafeInteger(event[key]));
+    const time = valid ? new Date(event.time) : null;
+    if (!valid || !Number.isFinite(time.getTime())) {
+      // The bounded backend tail can start in the middle of a JSONL record.
+      const partial = index === 0 && logView.truncated;
+      fragment.append(node("div", partial ? t("logPartial") : `${t("logUnparsed")}\n${line}`, "log-entry log-warning"));
+      continue;
+    }
+    const level = event.level.trim().toLowerCase();
+    const severity = level === "warn" ? "warning" : ["info", "warning", "error", "debug", "trace"].includes(level) ? level : "other";
+    const heading = [timeFormat.format(time), `[${levels[severity] || event.level.toUpperCase() || t("logRecord")}]`,
+      event.stage ? `[${t(event.stage) || event.stage}]` : "", event.code ? `[${event.code}]` : ""].filter(Boolean).join(" ");
+    const text = [`${heading} ${event.message}`];
+    if (event.input) text.push(`  ${t("logInput")}: ${event.input}`);
+    if (event.output) text.push(`  ${t("logOutput")}: ${event.output}`);
+    const context = [];
+    if (event.streamIndex !== undefined) context.push(`${t("logStream")}: ${event.streamIndex}`);
+    if (event.attempt !== undefined) context.push(`${t("logAttempt")}: ${event.attempt}`);
+    if (context.length) text.push(`  ${context.join(" · ")}`);
+    fragment.append(node("div", text.join("\n"), `log-entry log-${severity}`));
+  }
+  if (!fragment.childNodes.length) fragment.append(node("div", t("logEmpty"), "log-entry"));
+  const scrollTop = $("log-content").scrollTop;
+  $("log-content").replaceChildren(fragment);
+  $("log-content").scrollTop = scrollTop;
+}
+
 function applyLanguage() {
   document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
   $("language").value = language;
   $("language").setAttribute("aria-label", t("language"));
   $("progress").setAttribute("aria-label", t("queue"));
+  $("log-content").setAttribute("aria-label", t("logs"));
   document.querySelectorAll("[data-i18n]").forEach((element) => { element.textContent = t(element.dataset.i18n); });
   renderInputs();
   renderState();
+  renderLogs();
   if (lastError !== null) showError(lastError);
 }
 
@@ -438,9 +495,8 @@ $("view-logs").addEventListener("click", async () => {
   if (!backend) return;
   try {
     const view = await backend.Logs();
-    $("log-path").textContent = view.path;
-    $("log-content").textContent = view.content;
-    $("log-truncated").hidden = !view.truncated;
+    logView = view;
+    renderLogs();
     $("logs").hidden = false;
     if (view.problem) showError(view.problem);
   } catch (error) { showError(error); }
