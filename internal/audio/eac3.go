@@ -8,8 +8,9 @@ import (
 )
 
 // eac3Bitrate resolves CLI kb/s to native bits/second without changing the
-// source format. Limits keep core/dependent encoders on six-block frames;
-// 32 kb/s steps also give integral byte budgets after the 7.1 split.
+// source format. Source eligibility is checked by ValidateEAC3, not here.
+// Limits keep E-AC-3 on six-block frames; 32 kb/s steps also give integral
+// byte budgets after the 7.1 independent/dependent substream split.
 func eac3Bitrate(info Info, kbps int) (int, error) {
 	if info.Rate != 48000 || (info.Stream.Layout != "5.1(side)" && info.Stream.Layout != "7.1") {
 		return 0, &UnsupportedError{Code: "eac3_format", Message: fmt.Sprintf("E-AC-3 supports 48000 Hz with 5.1(side) or 7.1 only; got %d Hz / %s; no automatic resampling/remapping", info.Rate, info.Stream.Layout)}
@@ -57,6 +58,8 @@ func validateEAC3(ctx context.Context, encoded Info, stats av.EAC3Stats) error {
 	return validateLossy(ctx, encoded, stats)
 }
 
+// validateLossy shares strict decode/length checks between AC-3 and E-AC-3.
+// Matching codec/rate/layout is a separate gate performed by the caller.
 func validateLossy(ctx context.Context, encoded Info, stats av.EAC3Stats) error {
 	// Raw AC-3/E-AC-3 cannot signal gapless trimming: include the 256-sample MDCT
 	// tail and round up to a complete 1536-sample access unit. Even removing

@@ -26,8 +26,8 @@ type Stream struct {
 }
 
 // Info keeps codec/container metadata alongside parsed values used to enforce
-// the conversion contract. Bits is effective precision, not the int32 storage
-// width used internally while decoding.
+// the conversion contract. Bits is reported effective precision, not internal
+// PCM storage width; ordinary DTS does not require MA's 16/24-bit invariant.
 type Info struct {
 	Path   string `json:"path"`
 	Stream Stream `json:"stream"`
@@ -140,7 +140,8 @@ func (b Backend) ProbeStream(ctx context.Context, path string, index int) (resul
 	return result, nil
 }
 
-// ValidateEAC3 lets UI preflight reuse the exact conversion policy.
+// ValidateEAC3 applies the source and output policy used by conversion.
+// kbps controls MA output only; ordinary DTS always uses 1024 kb/s.
 func (i Info) ValidateEAC3(kbps int) error {
 	if err := i.ValidateInput(); err != nil {
 		return err
@@ -155,6 +156,7 @@ func (i Info) ordinaryDTS() bool {
 
 // ValidateInput recognizes the union of supported sources. Output-specific
 // checks must still run: ordinary DTS is never eligible for TrueHD.
+// Its lossy decoder representation does not establish an effective bit depth.
 func (i Info) ValidateInput() error {
 	if !i.ordinaryDTS() {
 		return i.ValidateSource()
@@ -165,6 +167,8 @@ func (i Info) ValidateInput() error {
 	return nil
 }
 
+// ValidateAC3 requires 48 kHz 5.1(side) without remapping. The encoder fixes
+// bitrate at 640 kb/s; there is no user-selectable AC-3 bitrate.
 func (i Info) ValidateAC3() error {
 	if err := i.ValidateInput(); err != nil {
 		return err
@@ -177,6 +181,7 @@ func (i Info) ValidateAC3() error {
 
 // ValidateOutput is shared by conversion and preflight; selecting several
 // formats requires each one to pass, without silently dropping an output.
+// kbps applies only to E-AC-3; "thd" is the output suffix for TrueHD.
 func (i Info) ValidateOutput(format string, kbps int) error {
 	switch format {
 	case "truehd", "thd":
@@ -193,6 +198,8 @@ func (i Info) ValidateOutput(format string, kbps int) error {
 	}
 }
 
+// ValidateSource retains the MA-only source contract for lossless TrueHD.
+// Use ValidateInput for inventory and ValidateOutput for format eligibility.
 func (i Info) ValidateSource() error {
 	// Match confirmed lossless profiles exactly; a generic "DTS:X" label is
 	// not proof of MA. Accepted X profiles still use only compatible channels,

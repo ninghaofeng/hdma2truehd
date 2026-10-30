@@ -13,8 +13,9 @@ extern int hdmaGoCancelled(uintptr_t handle);
 
 struct HDMAEAC3 {
     uintptr_t handle;
-    /* Slot 0 is the independent 5.1 core; slot 1 is the optional quad
-     * dependent stream carrying the four original 7.1 surround channels. */
+    /* Slot 0 is the only encoder for AC-3/E-AC-3 5.1. Only E-AC-3 7.1 adds
+     * slot 1, a quad dependent stream carrying the four original surrounds.
+     * This independent Dolby substream is not the source's DTS core. */
     AVCodecContext *encoders[2];
     AVFormatContext *output;
     AVAudioFifo *fifo;
@@ -63,6 +64,8 @@ static int eac3_open(const char *path, int channels, int bitrate, int ac3,
                    uintptr_t handle, HDMAEAC3 **result, char *error)
 {
     *result = NULL;
+    /* AC-3 reuses framing and flush code, never the 7.1 dependent-stream
+     * extension. Enforce its fixed presentation before allocating contexts. */
     if ((ac3 && (channels != 6 || bitrate != 640000)) ||
         (channels != 6 && channels != 8) || bitrate % 32000 ||
         bitrate < (channels == 8 ? 768000 : 384000) ||
@@ -91,8 +94,8 @@ static int eac3_open(const char *path, int channels, int bitrate, int ac3,
         ctx->sample_rate = 48000;
         ctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
         ctx->time_base = (AVRational){1, 48000};
-        /* The CLI bitrate covers the whole presentation, not each stream.
-         * Split 7.1's budget 5:3 between the core and dependent surrounds. */
+        /* The bitrate covers the whole presentation, not each stream.
+         * Split E-AC-3 7.1's budget 5:3; single-stream outputs use it all. */
         ctx->bit_rate = channels == 6 ? bitrate : bitrate * (i ? 3 : 5) / 8;
         ret = av_channel_layout_from_string(&ctx->ch_layout, i ? "quad" : "5.1(side)");
         if (ret < 0)
@@ -112,7 +115,7 @@ static int eac3_open(const char *path, int channels, int bitrate, int ac3,
         }
     }
     /* DTS frame boundaries need not match AC-3/E-AC-3's 1536-sample units.
-     * One shared FIFO keeps both encoders on identical source boundaries. */
+     * The same FIFO reblocks 5.1 or aligns E-AC-3's paired 7.1 encoders. */
     op->fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLTP, channels, 1536);
     if (!op->fifo) {
         ret = AVERROR(ENOMEM);

@@ -14,11 +14,14 @@ import (
 	"unsafe"
 )
 
-// EAC3Stats separates source duration from raw AC-3/E-AC-3 delay/padding.
+// EAC3Stats is shared by both lossy encoders. Samples counts original PCM per
+// channel; Decoded also includes the raw stream's fixed delay and frame padding.
 type EAC3Stats struct {
 	Samples, Decoded uint64
 }
 
+// eac3Writer feeds the shared AC-3/E-AC-3 native lifecycle synchronously from
+// Process callbacks; its historical name does not restrict the output codec.
 type eac3Writer struct {
 	op     *C.HDMAEAC3
 	status *operation
@@ -44,7 +47,8 @@ func (w eac3Writer) Write(p []byte) (int, error) {
 // EncodeEAC3 keeps decoding in the existing strict native pipeline and forwards
 // normalized PCM synchronously to a separate lossy encoder. It never uses an
 // external executable. Each output is still staged/published by package audio.
-// bitrate is the total bits/second, unlike the CLI's kb/s option.
+// bitrate is the total bits/second, unlike the CLI's kb/s option. Ordinary DTS
+// overrides a valid requested bitrate with the fixed maximum of 1024000.
 func EncodeEAC3(ctx context.Context, path, output string, expected Info, bitrate int) (EAC3Stats, error) {
 	return encodeDolby(ctx, path, output, expected, bitrate, false)
 }
@@ -55,6 +59,8 @@ func EncodeAC3(ctx context.Context, path, output string, expected Info) (EAC3Sta
 	return encodeDolby(ctx, path, output, expected, 640000, true)
 }
 
+// encodeDolby shares FIFO/flush accounting, not format eligibility. AC-3 uses
+// one 5.1 encoder; only E-AC-3 can use paired substreams for 7.1.
 func encodeDolby(ctx context.Context, path, output string, expected Info, bitrate int, ac3 bool) (EAC3Stats, error) {
 	if err := Check(ctx); err != nil {
 		return EAC3Stats{}, err

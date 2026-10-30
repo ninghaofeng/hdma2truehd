@@ -166,6 +166,8 @@ function appendProblem(parent, error, warning = false) {
 
 const outputFormats = [["truehd", "TrueHD"], ["eac3", "E-AC-3"], ["ac3", "AC-3"]];
 
+// General source failures apply to every output; otherwise consult the
+// requested format's policy rather than treating TrueHD as the source gate.
 function formatProblem(track, format) {
   const field = format === "truehd" ? "truehdProblem" : `${format}Problem`;
   return {reason: track.problem || track[field], code: track.problemCode || track[`${field}Code`]};

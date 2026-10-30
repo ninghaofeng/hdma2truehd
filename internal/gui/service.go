@@ -50,7 +50,8 @@ type Selection struct {
 }
 
 // Request is a preflight input, not a trusted copy of Inspect's metadata.
-// Bitrate51/71 are total kb/s for their layouts; zero delegates defaults to audio.
+// Bitrate51/71 are MA E-AC-3 kb/s; zero delegates defaults to audio. Ordinary
+// DTS uses 1024 instead; AC-3 has no configurable bitrate.
 type Request struct {
 	Tracks      []Selection `json:"tracks"`
 	TrueHD      bool        `json:"truehd"`
@@ -63,13 +64,14 @@ type Request struct {
 	Concurrency int         `json:"concurrency"`
 }
 
-// A job represents one track/format output, so selecting both formats creates
-// two independently published jobs. Sample counts are always per channel.
+// A job represents one track/format output. Multiple formats are independent
+// transactions, not one atomic group. Sample counts are always per channel.
 type Job struct {
-	Input          string               `json:"input"`
-	Index          int                  `json:"index"`
-	Output         string               `json:"output"`
-	Format         string               `json:"format"`
+	Input  string `json:"input"`
+	Index  int    `json:"index"`
+	Output string `json:"output"`
+	Format string `json:"format"`
+	// Bitrate is the E-AC-3 option only; zero on AC-3 still means fixed 640 kb/s.
 	Bitrate        int                  `json:"bitrate"`
 	Status         string               `json:"status"`
 	Error          string               `json:"error"`
@@ -318,8 +320,8 @@ func (s *Service) plan(ctx context.Context, req Request) ([]Job, error) {
 			}
 			destinations[key] = true
 			job := Job{Input: info.Path, Index: selected.Index, Output: target, Format: format, Status: "pending"}
-			// Snapshot the layout-specific setting after preflight. TrueHD jobs
-			// carry no lossy bitrate, even when both formats were selected.
+			// Snapshot the effective E-AC-3 setting after preflight. TrueHD and
+			// fixed-rate AC-3 jobs do not carry the configurable bitrate option.
 			if format == "eac3" {
 				job.Bitrate = bitrate
 			}

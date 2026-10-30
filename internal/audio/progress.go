@@ -41,7 +41,7 @@ func (r *reporter) stage(ctx context.Context, stage string) context.Context {
 			// Metadata may underestimate length; reserve 100% for actual completion.
 			r.current.Fraction = min(r.current.Seconds/p.Duration, .99)
 		}
-		// Native Done can mean source decoding ended while E-AC-3 still has
+		// Native Done can mean source decoding ended while AC-3/E-AC-3 still has
 		// encoder delay/padding to flush. Only finish may complete this stage.
 		r.send()
 	})

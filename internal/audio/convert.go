@@ -24,7 +24,8 @@ type Options struct {
 	StreamIndex *int
 	// SkipVerify skips only full decoding/comparison, not output format checks.
 	SkipVerify bool
-	// EAC3Bitrate is total kb/s; zero selects the layout-specific default.
+	// EAC3Bitrate is total kb/s for MA; zero selects its layout default.
+	// Ordinary DTS overrides it with 1024; AC-3 always uses 640 independently.
 	EAC3Bitrate int
 }
 
@@ -142,6 +143,8 @@ func (b Backend) convert(ctx context.Context, input, output string, options Opti
 	if extension != ".thd" && !lossy {
 		return Result{}, fmt.Errorf("output must use the .thd, .eac3 or .ac3 extension")
 	}
+	// Eligibility depends on the destination: accepting ordinary DTS for a
+	// lossy output must not weaken TrueHD's MA-only publication gate.
 	if err := source.ValidateOutput(strings.TrimPrefix(extension, "."), options.EAC3Bitrate); err != nil {
 		return Result{}, err
 	}

@@ -347,6 +347,8 @@ func lossyOutput(path string) bool {
 	return ext == ".eac3" || ext == ".ac3"
 }
 
+// outputFormats keeps the original "both" alias limited to TrueHD + E-AC-3.
+// Expansion plans every requested output; it never filters by source eligibility.
 func outputFormats(format string) ([]string, error) {
 	switch format {
 	case "both":

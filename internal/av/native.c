@@ -379,6 +379,9 @@ static int consume_frame(Operation *op, AVFrame *frame)
         frame->sample_rate != op->rate || av_channel_layout_compare(&frame->ch_layout, &op->layout))
         return AVERROR_INVALIDDATA;
     if (op->decoder->codec_id == AV_CODEC_ID_DTS) {
+        /* Core input is an explicit decode-only mode, not a fallback. Check
+         * every frame so enabling it cannot hide MA extension decode failure
+         * or switch between core and MA halfway through the selected stream. */
         int ma = op->decoder->profile == AV_PROFILE_DTS_HD_MA ||
                  op->decoder->profile == AV_PROFILE_DTS_HD_MA_X ||
                  op->decoder->profile == AV_PROFILE_DTS_HD_MA_X_IMAX;
@@ -388,7 +391,8 @@ static int consume_frame(Operation *op, AVFrame *frame)
         }
     }
     if (!op->swr) {
-        /* swresample only normalizes sample representation. Equal input/output
+        /* swresample only normalizes sample representation, including float
+         * decoded lossy PCM to int32. Equal input/output
          * rates and layouts plus disabled dither prohibit intentional remixing,
          * resampling or added noise. The checks below enforce this invariant. */
         op->input_format = frame->format;

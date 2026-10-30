@@ -3,10 +3,11 @@
 
 #include <stdint.h>
 
-/* Shared metadata contract: bits is effective precision, layout names speaker
- * positions, and all text fields must be NUL-terminated. index identifies the
- * global container stream. Native operations revalidate this format/identity
- * snapshot, but do not claim that it fingerprints the file's contents. */
+/* Shared metadata contract: bits is reported effective precision; explicit
+ * lossy processing uses 32 to request full-width PCM without zero-padding
+ * assertions. layout names speaker positions; text must be NUL-terminated.
+ * index identifies the global container stream. Operations revalidate this
+ * metadata snapshot, not a fingerprint of the file's contents. */
 typedef struct HDMAInfo {
     int index;
     int rate;
@@ -46,13 +47,15 @@ int hdma_probe_stream(const char *path, int index, uintptr_t handle,
 int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
                  uintptr_t handle, char *error);
 
-/* Stateful lossy encoder: write accepts interleaved little-endian int32 PCM.
+/* Shared AC-3/E-AC-3 lifecycle, retaining the original EAC3 symbol names.
+ * write accepts interleaved, left-aligned little-endian int32 PCM at 48 kHz.
  * bitrate is total bits/second; keep handle live until close, even on failure.
- * finish returns source samples and padded decoded samples per channel. */
+ * finish returns source and padded decoded samples per channel; close is still
+ * required after finish succeeds. Neither operation publishes the final path. */
 typedef struct HDMAEAC3 HDMAEAC3;
 int hdma_eac3_open(const char *path, int channels, int bitrate,
                    uintptr_t handle, HDMAEAC3 **result, char *error);
-/* AC-3 uses the same PCM/write/finish lifecycle, fixed at 640 kb/s and 5.1. */
+/* AC-3 uses the same PCM/write/finish lifecycle, fixed at 640 kb/s, 5.1(side). */
 int hdma_ac3_open(const char *path, int channels, uintptr_t handle,
                   HDMAEAC3 **result, char *error);
 int hdma_eac3_write(HDMAEAC3 *op, const unsigned char *pcm, int size, char *error);

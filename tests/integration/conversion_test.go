@@ -23,7 +23,7 @@ func TestDoctor(t *testing.T) {
 
 func TestRejectPCMInput(t *testing.T) {
 	// Low-level encoding accepts synthetic PCM for doctor, but the public
-	// conversion pipeline must still enforce the lossless DTS source policy.
+	// TrueHD conversion pipeline must still enforce the MA-only source policy.
 	b := testBackend(t)
 	dir := t.TempDir()
 	wav := filepath.Join(dir, "not-ma.wav")
