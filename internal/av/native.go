@@ -1,0 +1,263 @@
+// Package av is the synchronous cgo boundary to the patched static FFmpeg
+// backend. Each call owns its native contexts and its cancellation/PCM callbacks.
+package av
+
+/*
+#cgo CFLAGS: -I${SRCDIR}/../../.backend/ffmpeg-8.0.1
+#cgo LDFLAGS: ${SRCDIR}/../../.backend/ffmpeg-8.0.1/libavformat/libavformat.a ${SRCDIR}/../../.backend/ffmpeg-8.0.1/libavcodec/libavcodec.a ${SRCDIR}/../../.backend/ffmpeg-8.0.1/libswresample/libswresample.a ${SRCDIR}/../../.backend/ffmpeg-8.0.1/libavutil/libavutil.a -lm
+#cgo darwin LDFLAGS: -framework CoreFoundation -framework CoreVideo -framework CoreMedia -lpthread
+#cgo windows LDFLAGS: -static -lws2_32 -lbcrypt -lole32 -luuid
+#cgo linux LDFLAGS: -lpthread
+#include <stdlib.h>
+#include <libavutil/log.h>
+#include "native.h"
+*/
+import "C"
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"runtime/cgo"
+	"strings"
+	"sync"
+	"time"
+	"unsafe"
+
+	"github.com/ninghaofeng/hdma2truehd/internal/diagnostic"
+)
+
+// Version rejects an accidentally linked stock/incompatible backend. The marker
+// identifies the required patches, but is not a cryptographic provenance check.
+const Version = "8.0.1-hdma2truehd-71-v6"
+
+var loggingOnce sync.Once
+var logContext = struct {
+	sync.RWMutex
+	ctx context.Context
+}{ctx: context.Background()}
+
+// SetLogContext records unscoped FFmpeg worker-thread messages without assigning
+// them to an arbitrary concurrent job. Operation-thread logs use their handle.
+func SetLogContext(ctx context.Context) {
+	logContext.Lock()
+	logContext.ctx = ctx
+	logContext.Unlock()
+}
+
+type NativeError struct {
+	Code   string
+	Number int
+	Detail string
+}
+
+func (e *NativeError) Error() string {
+	return fmt.Sprintf("FFmpeg library: %s (code %d)", e.Detail, e.Number)
+}
+func (e *NativeError) DiagnosticCode() string { return e.Code }
+
+//export hdmaGoLog
+func hdmaGoLog(handle C.uintptr_t, level C.int, message *C.char) {
+	var ctx context.Context
+	if handle != 0 {
+		ctx = cgo.Handle(handle).Value().(*operation).ctx
+	} else {
+		logContext.RLock()
+		ctx = logContext.ctx
+		logContext.RUnlock()
+	}
+	// Diagnostics are not the operation's return value. FFmpeg may log an
+	// error yet return success; result converts actual failure codes separately.
+	severity := "warning"
+	if level <= C.AV_LOG_ERROR {
+		severity = "error"
+	}
+	diagnostic.Emit(ctx, diagnostic.Event{Level: severity, Code: "ffmpeg", Message: strings.TrimSpace(C.GoString(message))})
+}
+
+// Info holds copied metadata for synchronous native operations. Codec/format fields are
+// processing constraints; language/delay and header-policy flags also support
+// inventory and naming, but are not a compressed-content fingerprint.
+type Info struct {
+	Index, Rate, Bits, Channels int
+	Codec, Profile, Layout      string
+	Language                    string
+	DelayMS                     int64
+	ContentEncodingUnsupported  bool
+}
+
+// operation stays reachable through a cgo.Handle for the entire synchronous C
+// call. Only the integer handle crosses the boundary, never a stored Go pointer.
+type operation struct {
+	ctx          context.Context
+	out          io.Writer
+	err          error
+	lastProgress time.Time
+}
+
+//export hdmaGoProgress
+func hdmaGoProgress(handle C.uintptr_t, samples C.int64_t, rate C.int, duration C.int64_t, done C.int) {
+	op := cgo.Handle(handle).Value().(*operation)
+	report, _ := op.ctx.Value(progressKey{}).(func(Progress))
+	if report == nil {
+		return
+	}
+	now := time.Now()
+	if done == 0 && !op.lastProgress.IsZero() && now.Sub(op.lastProgress) < 150*time.Millisecond {
+		return
+	}
+	op.lastProgress = now
+	report(Progress{Samples: uint64(samples), Rate: int(rate), Duration: float64(duration) / 1e6, Done: done != 0})
+}
+
+//export hdmaGoCancelled
+func hdmaGoCancelled(handle C.uintptr_t) C.int {
+	op := cgo.Handle(handle).Value().(*operation)
+	if op.ctx.Err() != nil {
+		return 1
+	}
+	return 0
+}
+
+//export hdmaGoPCM
+func hdmaGoPCM(handle C.uintptr_t, data *C.uchar, size C.int) C.int {
+	op := cgo.Handle(handle).Value().(*operation)
+	// C owns this buffer and frees it after the callback returns. The writer
+	// must consume it synchronously, without retaining the borrowed slice.
+	p := unsafe.Slice((*byte)(unsafe.Pointer(data)), int(size))
+	n, err := op.out.Write(p)
+	if err == nil && n != len(p) {
+		err = io.ErrShortWrite
+	}
+	// Preserve the writer's Go error; C can report only a generic callback
+	// failure code, which would otherwise hide the actual cause.
+	op.err = err
+	if err != nil {
+		return -1
+	}
+	return 0
+}
+
+func Check(ctx context.Context) error {
+	loggingOnce.Do(func() { C.hdma_init_logging() })
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if version := C.GoString(C.hdma_version()); version != Version {
+		return fmt.Errorf("linked FFmpeg version %q, need %q; rebuild the patched static libraries", version, Version)
+	}
+	if C.hdma_check() != 0 {
+		return fmt.Errorf("linked FFmpeg lacks required DTS/TrueHD/AC-3/E-AC-3 codecs, raw muxers or Matroska demuxer")
+	}
+	return nil
+}
+
+func Probe(ctx context.Context, path string) (Info, error) {
+	return probeStream(ctx, path, -1)
+}
+
+func ProbeStream(ctx context.Context, path string, index int) (Info, error) {
+	if index < 0 || index > 1<<31-1 {
+		return Info{}, fmt.Errorf("invalid audio stream index")
+	}
+	return probeStream(ctx, path, index)
+}
+
+func nativeMetadata(info C.HDMAInfo) Info {
+	return Info{
+		Index: int(info.index), Rate: int(info.rate), Bits: int(info.bits), Channels: int(info.channels),
+		Codec: C.GoString(&info.codec[0]), Profile: C.GoString(&info.profile[0]), Layout: C.GoString(&info.layout[0]),
+		Language: strings.ToValidUTF8(C.GoString(&info.language[0]), "\uFFFD"), DelayMS: int64(info.delay_ms),
+		ContentEncodingUnsupported: info.content_encoding_unsupported != 0,
+	}
+}
+
+func probeStream(ctx context.Context, path string, index int) (Info, error) {
+	if index >= 0 {
+		ctx = diagnostic.WithStream(ctx, index)
+	}
+	if err := Check(ctx); err != nil {
+		return Info{}, err
+	}
+	if strings.ContainsRune(path, 0) {
+		return Info{}, fmt.Errorf("input path contains NUL")
+	}
+	op := &operation{ctx: ctx}
+	handle := cgo.NewHandle(op)
+	defer handle.Delete()
+	input := C.CString(path)
+	defer C.free(unsafe.Pointer(input))
+	var info C.HDMAInfo
+	var message [512]C.char
+	ret := C.hdma_probe_stream(input, C.int(index), C.uintptr_t(handle), &info, &message[0])
+	if err := result(op, ret, &message[0]); err != nil {
+		return Info{}, err
+	}
+	return nativeMetadata(info), nil
+}
+
+// Process reopens path and checks it against previously probed metadata.
+// A nonempty output encodes TrueHD; an empty output streams normalized PCM to
+// out. This low-level entry point does not perform transactional publication.
+func Process(ctx context.Context, path, output string, expected Info, out io.Writer) error {
+	ctx = diagnostic.WithStream(ctx, expected.Index)
+	if err := Check(ctx); err != nil {
+		return err
+	}
+	if strings.ContainsRune(path, 0) || strings.ContainsRune(output, 0) {
+		return fmt.Errorf("file path contains NUL")
+	}
+	// Lossy decoding uses full-width int32; it cannot assert
+	// an effective 16/24-bit precision or compare against the original PCM.
+	coreDTS := expected.Codec == "dts" && expected.Profile == "DTS" &&
+		expected.Rate == 48000 && expected.Channels == 6 && expected.Layout == "5.1(side)"
+	lossyDecode := output == "" && expected.Bits == 32 && (expected.Codec == "eac3" || expected.Codec == "ac3" || coreDTS)
+	if expected.Channels < 1 || expected.Channels > 8 || expected.Rate <= 0 ||
+		(expected.Bits != 16 && expected.Bits != 24 && !lossyDecode) {
+		return fmt.Errorf("invalid expected PCM format")
+	}
+	if output == "" && out == nil {
+		return fmt.Errorf("decode requires a PCM writer")
+	}
+	op := &operation{ctx: ctx, out: out}
+	handle := cgo.NewHandle(op)
+	defer handle.Delete()
+	input := C.CString(path)
+	defer C.free(unsafe.Pointer(input))
+	var target *C.char
+	if output != "" {
+		target = C.CString(output)
+		defer C.free(unsafe.Pointer(target))
+	}
+	var info C.HDMAInfo
+	info.index, info.rate, info.bits, info.channels = C.int(expected.Index), C.int(expected.Rate), C.int(expected.Bits), C.int(expected.Channels)
+	// Leave space for the terminating NUL in every fixed-size C field.
+	// Silent truncation could make the native metadata checks compare aliases.
+	for _, field := range []struct {
+		value string
+		dest  []C.char
+	}{{expected.Layout, info.layout[:]}, {expected.Codec, info.codec[:]}, {expected.Profile, info.profile[:]}} {
+		if len(field.value) >= len(field.dest) || strings.ContainsRune(field.value, 0) {
+			return fmt.Errorf("invalid expected stream metadata")
+		}
+		for i := 0; i < len(field.value); i++ {
+			field.dest[i] = C.char(field.value[i])
+		}
+	}
+	var message [512]C.char
+	ret := C.hdma_process(input, target, &info, C.uintptr_t(handle), &message[0])
+	return result(op, ret, &message[0])
+}
+
+func result(op *operation, ret C.int, message *C.char) error {
+	// Prefer typed Go errors so errors.Is still recognizes cancellation and
+	// writer failures after the native stack has unwound.
+	if op.ctx.Err() != nil || op.err != nil {
+		return errors.Join(op.ctx.Err(), op.err)
+	}
+	if ret < 0 {
+		return &NativeError{Code: C.GoString(C.hdma_error_kind(ret)), Number: int(ret), Detail: C.GoString(message)}
+	}
+	return nil
+}

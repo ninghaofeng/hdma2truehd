@@ -1,0 +1,152 @@
+--- a/libavcodec/mlpenc.c
++++ b/libavcodec/mlpenc.c
+@@ -586,6 +586,7 @@
+         ctx->summary_info      = ff_mlp_ch_info[ctx->channel_arrangement].summary_info     ;
+     } else {
+         /* TrueHD */
++        ctx->noise_type = avctx->ch_layout.nb_channels > 6;
+         ctx->num_substreams = 1 + (avctx->ch_layout.nb_channels > 2);
+         switch (channels_present) {
+         case AV_CH_LAYOUT_MONO:
+@@ -607,6 +608,8 @@
+         case AV_CH_LAYOUT_4POINT1:
+         case AV_CH_LAYOUT_5POINT0:
+         case AV_CH_LAYOUT_5POINT1:
++        case AV_CH_LAYOUT_5POINT1_BACK:
++        case AV_CH_LAYOUT_7POINT1:
+             ctx->ch2_presentation_mod= 0;
+             ctx->ch6_presentation_mod= 0;
+             ctx->ch8_presentation_mod= 0;
+@@ -618,8 +621,8 @@
+         ctx->flags = 0;
+         ctx->channel_occupancy = 0;
+         ctx->summary_info = 0;
+-        ctx->channel_arrangement =
+         ctx->channel_arrangement8 = layout_truehd(channels_present);
++        ctx->channel_arrangement = ctx->channel_arrangement8 & 0x1f;
+     }
+ 
+     for (unsigned int index = 0; index < ctx->restart_intervals; index++) {
+@@ -761,7 +764,7 @@
+     PutBitContext tmpb;
+     uint8_t checksum;
+ 
+-    put_bits(pb, 14, 0x31ea                ); /* TODO 0x31eb */
++    put_bits(pb, 14, 0x31ea | ctx->noise_type);
+     put_bits(pb, 16, ctx->output_timing    );
+     put_bits(pb,  4, rh->min_channel       );
+     put_bits(pb,  4, rh->max_channel       );
+@@ -1193,8 +1196,13 @@
+ 
+     for (int i = 0; i < nb_samples; i++) {
+         for (int ch = 0; ch <= rh->max_channel; ch++) {
+-            const int32_t *samples_32 = (const int32_t *)samples[ch];
+-            const int16_t *samples_16 = (const int16_t *)samples[ch];
++            /* TrueHD orders side surrounds before rear surrounds. */
++            int input_ch = ch;
++            if (ctx->avctx->codec_id == AV_CODEC_ID_TRUEHD &&
++                ctx->avctx->ch_layout.u.mask == AV_CH_LAYOUT_7POINT1 && ch >= 4)
++                input_ch = ch < 6 ? ch + 2 : ch - 2;
++            const int32_t *samples_32 = (const int32_t *)samples[input_ch];
++            const int16_t *samples_16 = (const int16_t *)samples[input_ch];
+             int32_t *sample_buffer = s->b[ctx->frame_index].inout_buffer[ch];
+             int32_t sample;
+ 
+@@ -2147,6 +2155,35 @@
+ }
+ 
+ /****************************************************************************/
++
++static void analyze_pending_frames(MLPEncodeContext *ctx)
++{
++    const int channels = ctx->avctx->ch_layout.nb_channels;
++
++    for (unsigned int seq_index = 0; seq_index < ctx->restart_intervals; seq_index++) {
++        ctx->number_of_frames = ctx->next_major_number_of_frames;
++        ctx->number_of_subblocks = ctx->next_major_number_of_frames + 1;
++
++        for (int n = 0; n < ctx->num_substreams; n++) {
++            MLPSubstream *s = &ctx->s[n];
++            for (int i = 0; i < s->b[seq_index].seq_size; i++) {
++                clear_channel_params(s->b[i].channel_params, channels);
++                default_decoding_params(ctx, &s->b[i].decoding_params);
++            }
++        }
++
++        if (ctx->number_of_frames)
++            for (int n = 0; n < ctx->num_substreams; n++)
++                analyze_sample_buffer(ctx, &ctx->s[n]);
++    }
++
++    if (ctx->frame_index == ctx->cur_restart_interval - 1) {
++        ctx->major_frame_size = ctx->next_major_frame_size;
++        ctx->next_major_frame_size = 0;
++        ctx->major_number_of_frames = ctx->next_major_number_of_frames;
++        ctx->next_major_number_of_frames = 0;
++    }
++}
+ 
+ static int mlp_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
+                             const AVFrame *frame, int *got_packet)
+@@ -2174,6 +2211,14 @@
+ 
+     data = frame ? frame->data[0] : NULL;
+ 
++    if (!frame && avctx->codec_id == AV_CODEC_ID_TRUEHD &&
++        avctx->frame_num < ctx->cur_restart_interval) {
++        /* Flush the initial partial interval before emitting its first packet. */
++        ctx->frame_index = ctx->cur_restart_interval - 1;
++        analyze_pending_frames(ctx);
++        avctx->frame_num = ctx->cur_restart_interval;
++    }
++
+     ctx->frame_index = avctx->frame_num % ctx->cur_restart_interval;
+ 
+     if (avctx->frame_num < ctx->cur_restart_interval) {
+@@ -2211,35 +2256,7 @@
+     restart_frame = (ctx->frame_index + 1) % ctx->min_restart_interval;
+ 
+     if (!restart_frame) {
+-        for (unsigned int seq_index = 0; seq_index < ctx->restart_intervals; seq_index++) {
+-            unsigned int number_of_samples;
+-
+-            ctx->number_of_frames = ctx->next_major_number_of_frames;
+-            ctx->number_of_subblocks = ctx->next_major_number_of_frames + 1;
+-
+-            number_of_samples = avctx->frame_size * ctx->number_of_frames;
+-
+-            for (int n = 0; n < ctx->num_substreams; n++) {
+-                MLPSubstream *s = &ctx->s[n];
+-
+-                for (int i = 0; i < s->b[seq_index].seq_size; i++) {
+-                    clear_channel_params(s->b[i].channel_params, channels);
+-                    default_decoding_params(ctx, &s->b[i].decoding_params);
+-                }
+-            }
+-
+-            if (number_of_samples > 0) {
+-                for (int n = 0; n < ctx->num_substreams; n++)
+-                    analyze_sample_buffer(ctx, &ctx->s[n]);
+-            }
+-        }
+-
+-        if (ctx->frame_index == (ctx->cur_restart_interval - 1)) {
+-            ctx->major_frame_size = ctx->next_major_frame_size;
+-            ctx->next_major_frame_size = 0;
+-            ctx->major_number_of_frames = ctx->next_major_number_of_frames;
+-            ctx->next_major_number_of_frames = 0;
+-        }
++        analyze_pending_frames(ctx);
+     }
+ 
+     if (!frame && ctx->last_frames < ctx->cur_restart_interval - 1)
+@@ -2334,7 +2351,8 @@
+                      AV_CHANNEL_LAYOUT_2POINT1, AV_CHANNEL_LAYOUT_SURROUND,
+                      AV_CHANNEL_LAYOUT_3POINT1, AV_CHANNEL_LAYOUT_4POINT0,
+                      AV_CHANNEL_LAYOUT_4POINT1, AV_CHANNEL_LAYOUT_5POINT0,
+-                     AV_CHANNEL_LAYOUT_5POINT1),
++                     AV_CHANNEL_LAYOUT_5POINT1, AV_CHANNEL_LAYOUT_5POINT1_BACK,
++                     AV_CHANNEL_LAYOUT_7POINT1),
+     .caps_internal          = FF_CODEC_CAP_INIT_CLEANUP,
+ };
+ #endif

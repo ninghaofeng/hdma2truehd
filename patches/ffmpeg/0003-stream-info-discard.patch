@@ -1,0 +1,52 @@
+diff --git a/libavformat/demux.c b/libavformat/demux.c
+--- a/libavformat/demux.c
++++ b/libavformat/demux.c
+@@ -2578,6 +2578,9 @@ int avformat_find_stream_info(AVFormatContext *ic, AVDictionary **options)
+         FFStream *const sti = ffstream(st);
+         AVCodecContext *const avctx = sti->avctx;
+ 
++        if (st->discard == AVDISCARD_ALL)
++            continue;
++
+         /* check if the caller has overridden the codec id */
+         // only for the split stuff
+         if (!sti->parser && !(ic->flags & AVFMT_FLAG_NOPARSE) && sti->request_probe <= 0) {
+@@ -2648,6 +2651,9 @@ int avformat_find_stream_info(AVFormatContext *ic, AVDictionary **options)
+             int fps_analyze_framecount = 20;
+             int count;
+ 
++            if (st->discard == AVDISCARD_ALL)
++                continue;
++
+             if (!has_codec_parameters(st, NULL))
+                 break;
+             /* If the timebase is coarse (like the usual millisecond precision
+@@ -2869,6 +2875,8 @@ int avformat_find_stream_info(AVFormatContext *ic, AVDictionary **options)
+         for (unsigned stream_index = 0; stream_index < ic->nb_streams; stream_index++) {
+             AVStream *const st = ic->streams[stream_index];
+             AVCodecContext *const avctx = ffstream(st)->avctx;
++            if (st->discard == AVDISCARD_ALL)
++                continue;
+             if (!has_codec_parameters(st, NULL)) {
+                 const AVCodec *codec = find_probe_decoder(ic, st, st->codecpar->codec_id);
+                 if (codec && !avctx->codec) {
+@@ -2920,6 +2928,9 @@ int avformat_find_stream_info(AVFormatContext *ic, AVDictionary **options)
+         FFStream *const sti = ffstream(st);
+         AVCodecContext *const avctx = sti->avctx;
+ 
++        if (st->discard == AVDISCARD_ALL)
++            continue;
++
+         if (avctx->codec_type == AVMEDIA_TYPE_VIDEO) {
+             if (avctx->codec_id == AV_CODEC_ID_RAWVIDEO && !avctx->codec_tag && !avctx->bits_per_coded_sample) {
+                 uint32_t tag= avcodec_pix_fmt_to_codec_tag(avctx->pix_fmt);
+@@ -3025,6 +3036,9 @@ int avformat_find_stream_info(AVFormatContext *ic, AVDictionary **options)
+         FFStream *const sti = ffstream(st);
+         const char *errmsg;
+ 
++        if (st->discard == AVDISCARD_ALL)
++            continue;
++
+         /* if no packet was ever seen, update context now for has_codec_parameters */
+         if (!sti->avctx_inited) {
+             if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&

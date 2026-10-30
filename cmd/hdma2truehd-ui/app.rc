@@ -1,0 +1,3 @@
+// Wails loads the window/taskbar icon by group resource ID 3.
+3 ICON "assets/app.ico"
+#include "ui-version.rc"

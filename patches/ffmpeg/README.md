@@ -1,0 +1,152 @@
+# Experimental TrueHD / E-AC-3 / AC-3 backend
+
+Base: [FFmpeg 8.0.1](https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz).
+
+Archive SHA-256:
+`05ee0b03119b45c0bdb4df654b96802e909e0a752f72e4fe3794f487229e5a41`
+
+The patch modifies `libavcodec/mlpenc.c`:
+
+- Adds `7.1` and rear-surround `5.1` layouts.
+- Uses the TrueHD `0x31eb` restart-header noise type for eight channels.
+  The decoder cannot handle eight matrix channels with the MLP noise type.
+- Maps FFmpeg's native `7.1` PCM order (rear before side surrounds) to
+  TrueHD's side-before-rear order. This does not mix or relabel speakers.
+- Keeps the five-bit presentation field separate from the full thirteen-bit
+  channel map.
+- Analyzes an initial partial restart interval before flushing it, avoiding
+  empty/undecodable output for very short inputs.
+
+The existing two-substream organization is retained. The full multichannel
+presentation uses both substreams. No new 5.1 downmix presentation is generated
+for 7.1, and no Dolby Digital companion/core stream is generated.
+
+The Go tool checks the linked library's build marker
+`8.0.1-hdma2truehd-71-v6`. Version 3 enabled the Matroska demuxer for explicitly
+selected MKV audio tracks, without enabling video decoding. Version 4 also
+enables stock AC-3 encoding/decoding and raw AC-3 muxing/demuxing. Rebuild older
+static libraries; adding AC-3 does not require another upstream codec patch.
+Version 5 makes stream-info probing respect explicitly discarded tracks,
+as described below.
+Version 6 applies audio scope during Matroska header parsing, before stream-info
+probing can set discard flags.
+This marker is a version check, not cryptographic
+provenance or a substitute for testing. `doctor` performs actual in-process
+24-bit PCM round trips for each supported layout.
+
+## Stream-info isolation patch
+
+`0003-stream-info-discard.patch` makes `avformat_find_stream_info` honor
+`AVDISCARD_ALL` when opening probe codecs, deciding whether probing is complete,
+performing EOF/parameter analysis and reporting missing codec parameters.
+Stock 8.0.1 can still report unknown codecs for discarded MKV attachments.
+
+The bridge sets discard flags after container headers and before probing:
+inventory enables all audio tracks, while selected-track probing and decoding
+enable only the requested audio stream. Global indices and unsupported audio
+inventory entries are preserved. Video, subtitle and attachment codecs are
+not requirements for converting the selected audio. No log-text filters or
+global warning suppression are used; selected audio and container errors
+still propagate.
+
+## Matroska header content-encoding isolation
+
+`0004-matroska-audio-scope.patch` adds opt-in Matroska demuxer options:
+`hdma_audio_only=1` and `hdma_audio_stream=INDEX` (`-1` inventories audio).
+The bridge sets both before `avformat_open_input`. Header parsing retains all
+global stream indices but does not interpret content encodings or codec-private
+data for video, subtitles or unselected audio. For example, zlib-compressed
+subtitles no longer emit `Unsupported encoding type` in this minimal build,
+which does not enable zlib/bzip2. No message-text filter is used. Without
+these options, upstream behavior is unchanged.
+
+Audio inventory marks unsupported compression, encryption, encoding chains or
+scopes as a per-track incompatibility instead of attempting to probe those
+packets. Other audio remains available. Selecting an affected track explicitly
+fails before decoding or output publication. Supported audio content encodings
+retain upstream handling; container structure errors and selected audio
+decoding errors still propagate. This does not add decryption, zlib/bzip2
+support, video decoding or subtitle conversion.
+
+## E-AC-3 dependent-substream patch
+
+`0002-eac3-dependent-7.1.patch` adds the opt-in `dependent_71` encoder option
+for quad PCM. Default independent encoding is unchanged. The dependent stream
+uses type 1, substream ID 0 and channel map `0x1a00` (side L/R, then back L/R).
+Independent-only converter/mixing fields are omitted, including the per-block
+converter SNR flag; the bit-allocation accounting is updated accordingly.
+
+The application encodes a 5.1 compatibility core and a four-channel dependent
+stream in lockstep, concatenating matching access units in-process. The dependent
+stream replaces the core surrounds and adds the rears; it is not a second
+independent track or a 5.1 upmix. Core/extension bitrates use a 5:3 split.
+No external encoder or stream-muxing executable is used.
+
+This design references [HG3112/md71](https://github.com/HG3112/md71) by HellGauss
+(LGPL 2.1). The patch is against the pinned FFmpeg sources, retaining their
+upstream license and copyright notices; it is not a bundled Windows-only binary.
+
+E-AC-3 is explicitly lossy. Current application support is 48 kHz 5.1(side)/7.1.
+Raw output retains 256 samples of MDCT delay and frame-boundary padding, with
+decoded length `ceil((N + 256) / 1536) * 1536`. The application strictly decodes
+and checks output format and exact padded length, never source PCM equality.
+Synthetic channel-specific tones check routing and SNR separately.
+`doctor` also checks both E-AC-3 layouts. Playback and Blu-ray compliance remain
+unverified; a core-only player may expose only 5.1.
+
+## AC-3 and ordinary DTS
+
+AC-3 uses the same bounded PCM FIFO and strict length accounting as E-AC-3,
+but only one stock independent encoder at 48 kHz, 5.1(side), fixed 640 kb/s.
+It retains the same 256-sample delay and 1536-sample framing. Verification
+checks complete output decoding and exact padded length, never PCM equality.
+`doctor` includes this AC-3 path.
+
+Ordinary DTS (profile `DTS`) is allowed only at 48 kHz 5.1(side), to AC-3 or
+E-AC-3. E-AC-3 uses the maximum supported 1024 kb/s independently of MA
+bitrate controls. It is not accepted for TrueHD, nor does this enable HRA,
+unknown profiles or ordinary DTS 7.1. The native decoder separately checks
+the expected core profile; MA operations still reject fallback to lossy core.
+
+## Verification boundaries
+
+The integration suite tests three layouts, six sample rates, two bit depths,
+and eight lengths: 288 cases. Each checks codec, layout, rate, effective
+precision, exact sample count, and complete PCM equality. A separate installed
+FFmpeg command can optionally be used as an additional decoder; it is still
+the same decoder family, not an independent implementation. The default tests
+and all production operations call the libraries directly.
+
+These are experimental raw TrueHD streams, not certified Dolby or Blu-ray
+encodes. In particular, successful software round trips for eight-channel
+176.4/192 kHz streams do not imply Blu-ray compatibility. Dolby documents
+Blu-ray limits of eight channels at 96 kHz and six channels at 192 kHz:
+[Dolby TrueHD](https://professional.dolby.com/tv/dolby-truehd/).
+Hardware playback, bitrate compliance, downmix presentation behavior and
+interoperability require further validation.
+
+The build is intentionally minimal, disables command-line programs, shared
+libraries, network support and third-party codecs. It includes the native
+DTS decoder, TrueHD, E-AC-3 and AC-3 encoders/decoders, PCM decoders and required containers.
+The cgo bridge statically links libavformat, libavcodec, libavutil and
+libswresample. Sample conversion uses identical rates and layouts, disables
+dithering, and rejects precision loss.
+
+## Licensing
+
+The patches modify FFmpeg source and are provided under the
+upstream files' LGPL 2.1-or-later terms. Original copyright notices remain
+in the patched source. See [COPYING.LGPLv2.1](COPYING.LGPLv2.1).
+
+Builds from the provided script do not enable GPL or nonfree components.
+Verify the actual build configuration before redistribution. If distributing
+modified FFmpeg binaries, provide the corresponding source, these patches,
+license notices, build instructions and all other materials required by the
+applicable license. The CLI now statically links these libraries through cgo.
+The release script also provides application object files and a tested
+re-linking command so users can replace compatible libraries. See
+[re-linking instructions](../../docs/RELINKING.md).
+Codec patent or trademark permissions are separate from the source-code license.
+
+TrueHD does not use the lossy E-AC-3 design. The E-AC-3 path references the
+dependent-stream design described above and does not ship or invoke md71 binaries.

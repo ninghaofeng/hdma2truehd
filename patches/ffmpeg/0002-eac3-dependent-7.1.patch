@@ -1,0 +1,172 @@
+--- a/libavcodec/ac3enc.h
++++ b/libavcodec/ac3enc.h
+@@ -114,6 +114,7 @@
+     int ad_converter_type;
+     int eac3_mixing_metadata;
+     int eac3_info_metadata;
++    int dependent_71;
+ 
+     /* other encoding options */
+     int allow_per_frame_metadata;
+--- a/libavcodec/ac3enc.c
++++ b/libavcodec/ac3enc.c
+@@ -120,6 +120,7 @@
+     {"standard", "Standard (default)", 0, AV_OPT_TYPE_CONST, {.i64 = AC3ENC_OPT_ADCONV_STANDARD }, INT_MIN, INT_MAX, AC3ENC_PARAM, .unit = "ad_conv_type"},
+     {"hdcd",     "HDCD",               0, AV_OPT_TYPE_CONST, {.i64 = AC3ENC_OPT_ADCONV_HDCD     }, INT_MIN, INT_MAX, AC3ENC_PARAM, .unit = "ad_conv_type"},
+ /* Other Encoding Options */
++{"dependent_71", "Encode a quad dependent substream for 7.1", OFFSET(dependent_71), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, AC3ENC_PARAM},
+ {"stereo_rematrixing", "Stereo Rematrixing", OFFSET(stereo_rematrixing), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, AC3ENC_PARAM},
+ {"channel_coupling",   "Channel Coupling",   OFFSET(channel_coupling),   AV_OPT_TYPE_INT, {.i64 = AC3ENC_OPT_AUTO }, AC3ENC_OPT_AUTO, AC3ENC_OPT_ON, AC3ENC_PARAM, .unit = "channel_coupling"},
+     {"auto", "Selected by the Encoder", 0, AV_OPT_TYPE_CONST, {.i64 = AC3ENC_OPT_AUTO }, INT_MIN, INT_MAX, AC3ENC_PARAM, .unit = "channel_coupling"},
+@@ -975,7 +976,9 @@
+         /* bitstream info header */
+         frame_bits += 35;
+         frame_bits += 1 + 1;
+-        if (s->num_blocks != 0x6)
++        if (s->options.dependent_71)
++            frame_bits += 17; /* chanmape + Ls/Rs/Lrs/Rrs channel map */
++        if (!s->options.dependent_71 && s->num_blocks != 0x6)
+             frame_bits++;
+         frame_bits++;
+         /* audio frame header */
+@@ -990,10 +993,12 @@
+         if (s->lfe_on)
+             frame_bits += s->num_blocks;
+         /* converter exponent strategy */
+-        if (s->num_blks_code != 0x3)
+-            frame_bits++;
+-        else
+-            frame_bits += s->fbw_channels * 5;
++        if (!s->options.dependent_71) {
++            if (s->num_blks_code != 0x3)
++                frame_bits++;
++            else
++                frame_bits += s->fbw_channels * 5;
++        }
+         /* snr offsets */
+         frame_bits += 10;
+         /* block start info */
+@@ -1038,7 +1043,8 @@
+         }
+ 
+         /* snroffste for AC-3, convsnroffste for E-AC-3 */
+-        frame_bits++;
++        if (!s->eac3 || !s->options.dependent_71)
++            frame_bits++;
+ 
+         if (!s->eac3) {
+             /* delta bit allocation */
+@@ -1115,10 +1121,12 @@
+             if (s->has_surround)
+                 frame_bits += 6;
+             frame_bits += s->lfe_on;
+-            frame_bits += 1 + 1 + 2;
+-            if (s->channel_mode < AC3_CHMODE_STEREO)
++            if (!opt->dependent_71) {
++                frame_bits += 1 + 1 + 2;
++                if (s->channel_mode < AC3_CHMODE_STEREO)
++                    frame_bits++;
+                 frame_bits++;
+-            frame_bits++;
++            }
+         }
+         if (opt->eac3_info_metadata) {
+             frame_bits += 3 + 1 + 1;
+@@ -1829,7 +1837,7 @@
+                 put_bits(pb, 3, s->fast_gain_code[ch]);
+             }
+         }
+-    } else {
++    } else if (!s->options.dependent_71) {
+         put_bits(pb, 1, 0); /* no converter snr offset */
+     }
+ 
+--- a/libavcodec/eac3enc.c
++++ b/libavcodec/eac3enc.c
+@@ -140,7 +140,7 @@
+     put_bits(pb, 16, 0x0b77);                   /* sync word */
+ 
+     /* BSI header */
+-    put_bits(pb,  2, 0);                        /* stream type = independent */
++    put_bits(pb,  2, opt->dependent_71);         /* independent or dependent */
+     put_bits(pb,  3, 0);                        /* substream id = 0 */
+     put_bits(pb, 11, (s->frame_size / 2) - 1);  /* frame size */
+     put_bits(pb, 2, s->bit_alloc.sr_code);      /* sample rate code */
+@@ -150,6 +150,10 @@
+     put_bits(pb, 5, s->bitstream_id);           /* bitstream id (EAC3=16) */
+     put_bits(pb, 5, -opt->dialogue_level);      /* dialogue normalization level */
+     put_bits(pb, 1, 0);                         /* no compression gain */
++    if (opt->dependent_71) {
++        put_bits(pb, 1, 1);                     /* custom channel map present */
++        put_bits(pb, 16, 0x1a00);               /* Ls, Rs, Lrs, Rrs */
++    }
+     /* mixing metadata*/
+     put_bits(pb, 1, opt->eac3_mixing_metadata);
+     if (opt->eac3_mixing_metadata) {
+@@ -165,12 +169,14 @@
+         }
+         if (s->lfe_on)
+             put_bits(pb, 1, 0);
+-        put_bits(pb, 1, 0);                     /* no program scale */
+-        put_bits(pb, 1, 0);                     /* no ext program scale */
+-        put_bits(pb, 2, 0);                     /* no mixing parameters */
+-        if (s->channel_mode < AC3_CHMODE_STEREO)
+-            put_bits(pb, 1, 0);                 /* no pan info */
+-        put_bits(pb, 1, 0);                     /* no frame mix config info */
++        if (!opt->dependent_71) {
++            put_bits(pb, 1, 0);                 /* no program scale */
++            put_bits(pb, 1, 0);                 /* no ext program scale */
++            put_bits(pb, 2, 0);                 /* no mixing parameters */
++            if (s->channel_mode < AC3_CHMODE_STEREO)
++                put_bits(pb, 1, 0);             /* no pan info */
++            put_bits(pb, 1, 0);                 /* no frame mix config info */
++        }
+     }
+     /* info metadata*/
+     put_bits(pb, 1, opt->eac3_info_metadata);
+@@ -192,7 +198,7 @@
+         }
+         put_bits(pb, 1, 0);
+     }
+-    if (s->num_blocks != 6)
++    if (!opt->dependent_71 && s->num_blocks != 6)
+         put_bits(pb, 1, !(s->avctx->frame_num % 6)); /* converter sync flag */
+     put_bits(pb, 1, 0);                         /* no additional bit stream info */
+ 
+@@ -234,14 +240,16 @@
+             put_bits(pb, 1, s->exp_strategy[s->lfe_channel][blk]);
+     }
+     /* E-AC-3 to AC-3 converter exponent strategy (not optional when num blocks == 6) */
+-    if (s->num_blocks != 6) {
+-        put_bits(pb, 1, 0);
+-    } else {
+-        for (ch = 1; ch <= s->fbw_channels; ch++) {
+-            if (s->use_frame_exp_strategy)
+-                put_bits(pb, 5, s->frame_exp_strategy[ch]);
+-            else
+-                put_bits(pb, 5, 0);
++    if (!opt->dependent_71) {
++        if (s->num_blocks != 6) {
++            put_bits(pb, 1, 0);
++        } else {
++            for (ch = 1; ch <= s->fbw_channels; ch++) {
++                if (s->use_frame_exp_strategy)
++                    put_bits(pb, 5, s->frame_exp_strategy[ch]);
++                else
++                    put_bits(pb, 5, 0);
++            }
+         }
+     }
+     /* snr offsets */
+@@ -262,6 +270,11 @@
+ 
+     ff_thread_once(&init_static_once, eac3_exponent_init);
+ 
++    if (s->options.dependent_71 &&
++        avctx->ch_layout.u.mask != AV_CH_LAYOUT_QUAD) {
++        av_log(avctx, AV_LOG_ERROR, "dependent_71 requires quad input\n");
++        return AVERROR(EINVAL);
++    }
+     return ff_ac3_float_encode_init(avctx);
+ }
+ 
