@@ -40,6 +40,7 @@ cd "$source_dir"
 patch --batch --forward -p1 < "$root/patches/ffmpeg/0001-truehd-7.1-and-short-streams.patch"
 patch --batch --forward -p1 < "$root/patches/ffmpeg/0002-eac3-dependent-7.1.patch"
 patch --batch --forward -p1 < "$root/patches/ffmpeg/0003-stream-info-discard.patch"
+patch --batch --forward -p1 < "$root/patches/ffmpeg/0004-matroska-audio-scope.patch"
 extra_ldflags=""
 extra_cflags=""
 compiler="${CC:-gcc}"
@@ -70,6 +71,6 @@ fi
     --enable-muxer=truehd,eac3,ac3,wav,pcm_s16le,pcm_s24le,pcm_s32le \
     --extra-ldflags="$extra_ldflags" \
     --extra-cflags="$extra_cflags" \
-    --extra-version=hdma2truehd-71-v5
+    --extra-version=hdma2truehd-71-v6
 make -j"${JOBS:-2}"
 printf '\nStatic libraries built in %s\nRun go test ./... and bash scripts/build-release.sh.\n' "$source_dir"

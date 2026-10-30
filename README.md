@@ -74,9 +74,13 @@ macOS 使用 `.tar.gz` 保留执行权限，Windows 使用 `.zip`，
 
 - 批量选择或拖入 `.dts`、`.dtshd`、`.mkv`，直接读取本地文件，不上传或复制整部 MKV。
 - MKV 展示音轨索引、语言、标题、格式、声道和时长；手动勾选一条或多条音轨。
+  音轨使用紧凑摘要与横向格式标签；详细不兼容原因可展开查看，相同原因合并展示。
   枚举只探测音频轨道；转换和源 PCM 校验只处理所选音轨，跳过视频、字幕、
   附件及其他未选轨道的 codec 探测。目标音轨损坏或容器读取失败仍明确报错，
   不会通过全局屏蔽 FFmpeg 警告掩盖问题。
+  隔离从 MKV 头部解析开始：无关视频、字幕和未选音轨的内容压缩/加密声明不会
+  干扰所选音轨。音频枚举仍保留不支持内容编码的音轨并显示不可转换原因；
+  若选中这类音轨，则在解码前明确拒绝，不会把真实错误当作无关警告。
   普通 DTS 5.1 可选择有损输出；HRA 和其他不支持音轨仍显示但不可转换。
   不兼容原因按界面语言显示，并随所选输出格式更新；仅 E-AC-3 不兼容时，
   可取消 E-AC-3、保留 TrueHD。存在不兼容的已选音轨时不能开始转换。
@@ -96,7 +100,7 @@ macOS 使用 `.tar.gz` 保留执行权限，Windows 使用 `.zip`，
 - 仅生成独立音频文件，不封装回 MKV、不解码视频或字幕，也不解析 DTS:X 对象。
 
 下文的平台构建入口默认同时生成 CLI 和 UI，并打包到同一发布目录。
-如果已经构建好本机 **v5** FFmpeg 后端，也可直接打包：
+如果已经构建好本机 **v6** FFmpeg 后端，也可直接打包：
 
 ```bash
 # macOS 终端 / Windows MSYS2 UCRT64 或 CLANGARM64 终端
@@ -240,8 +244,8 @@ SHA-256 校验工具。FFmpeg 构建脚本只生成静态库，不编译命令�
 替换静态库后应使用 `go build -a` / `go test -a` 强制重新链接，避免 Go 缓存
 继续使用外部库的旧版本。
 
-**旧后端升级：** MKV 轨道隔离要求版本标记 `8.0.1-hdma2truehd-71-v5`。
-旧的 `v1` / `v2` / `v3` / `v4` 静态库不能复用来构建此版本；先将 `.backend/ffmpeg-8.0.1/`
+**旧后端升级：** MKV 头部与轨道隔离要求版本标记 `8.0.1-hdma2truehd-71-v6`。
+旧的 `v1` / `v2` / `v3` / `v4` / `v5` 静态库不能复用来构建此版本；先将 `.backend/ffmpeg-8.0.1/`
 重命名为一个尚未占用的备份目录，再执行不带 `--reuse-backend` / `-ReuseBackend`
 的完整平台构建。不要仅执行 `--binary-only`；程序会拒绝旧版本后端。
 
@@ -716,10 +720,17 @@ kits. The workflow currently does not sign code or notarize macOS applications.
   and durations. Explicitly select one or more audio tracks. Unsupported tracks
   remain visible; ordinary DTS 5.1 supports lossy outputs, while HRA and other
   unsupported tracks remain disabled.
+  Track rows use compact summaries and inline format badges; expand format
+  limits for full incompatibility reasons, with identical reasons grouped together.
   Inventory probes audio only; conversion and source PCM verification probe
   and process only the selected audio track. Video, subtitle, attachment and
   unselected-track codecs are excluded. Selected audio corruption and container
   read failures still report errors; FFmpeg warnings are not globally suppressed.
+  Isolation starts during MKV header parsing: content compression/encryption on
+  unrelated video, subtitles and unselected audio does not affect the selected
+  audio. Inventory retains audio tracks with unsupported content encodings and
+  explains why they are disabled; explicitly selecting one fails before decoding
+  rather than treating a real error as an unrelated warning.
   Reasons use the interface language and update with selected output formats.
   If only E-AC-3 is incompatible, deselect it to retain TrueHD. Incompatible
   selected tracks block conversion until the selection or formats are changed.
@@ -748,7 +759,7 @@ kits. The workflow currently does not sign code or notarize macOS applications.
   decoding or DTS:X object rendering is added.
 
 The platform build entry points below now build CLI and UI into one release by
-default. With an existing native **v5** FFmpeg backend, package them directly:
+default. With an existing native **v6** FFmpeg backend, package them directly:
 
 ```bash
 # macOS terminal / Windows MSYS2 UCRT64 or CLANGARM64 terminal
@@ -934,7 +945,7 @@ relinking rather than reusing a cached result linked against old external
 archives.
 
 **Upgrading an old backend:** This feature requires the marker
-`8.0.1-hdma2truehd-71-v5` for MKV stream isolation. Old `v1` / `v2` / `v3` / `v4` static libraries cannot be reused.
+`8.0.1-hdma2truehd-71-v6` for MKV header/stream isolation. Old `v1` / `v2` / `v3` / `v4` / `v5` static libraries cannot be reused.
 Rename `.backend/ffmpeg-8.0.1/` to an unused backup directory, then run a full
 platform build without `--reuse-backend` / `-ReuseBackend`. An executable-only
 build is insufficient; the program rejects the old backend.

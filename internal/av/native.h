@@ -2,6 +2,9 @@
 #define HDMA_NATIVE_H
 
 #include <stdint.h>
+#include <libavutil/error.h>
+
+#define HDMA_ERROR_CONTENT_ENCODING FFERRTAG('H', 'D', 'C', 'E')
 
 /* Shared metadata contract: bits is reported effective precision; explicit
  * lossy processing uses 32 to request full-width PCM without zero-padding
@@ -18,6 +21,7 @@ typedef struct HDMAInfo {
     char layout[128];
     char language[64];
     int64_t delay_ms;
+    int content_encoding_unsupported;
 } HDMAInfo;
 
 const char *hdma_version(void);

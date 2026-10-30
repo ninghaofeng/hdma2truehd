@@ -1,0 +1,150 @@
+--- a/libavformat/matroskadec.c
++++ b/libavformat/matroskadec.c
+@@ -438,6 +438,8 @@
+ 
+     /* Bandwidth value for WebM DASH Manifest */
+     int bandwidth;
++    int hdma_audio_only;
++    int hdma_audio_stream;
+ } MatroskaDemuxContext;
+ 
+ #define CHILD_OF(parent) { .def = { .n = parent } }
+@@ -2036,13 +2038,32 @@
+     }
+ 
+     matroska_add_index_entries(matroska);
++}
++
++static int matroska_supported_compression(uint64_t algo)
++{
++    return
++#if CONFIG_ZLIB
++        algo == MATROSKA_TRACK_ENCODING_COMP_ZLIB ||
++#endif
++#if CONFIG_BZLIB
++        algo == MATROSKA_TRACK_ENCODING_COMP_BZLIB ||
++#endif
++        algo == MATROSKA_TRACK_ENCODING_COMP_LZO ||
++        algo == MATROSKA_TRACK_ENCODING_COMP_HEADERSTRIP;
+ }
+ 
+ static int matroska_parse_content_encodings(MatroskaTrackEncoding *encodings,
+                                             unsigned nb_encodings,
+                                             MatroskaTrack *track,
+-                                            char **key_id_base64, void *logctx)
++                                            char **key_id_base64, void *logctx,
++                                            int strict)
+ {
++    if (strict && (nb_encodings > 1 ||
++                   (nb_encodings && (encodings->type ||
++                    !encodings->scope || (encodings->scope & ~3ULL) ||
++                    !matroska_supported_compression(encodings->compression.algo)))))
++        return AVERROR(ENOSYS);
+     if (nb_encodings > 1) {
+         av_log(logctx, AV_LOG_ERROR,
+                 "Multiple combined encodings not supported\n");
+@@ -2066,15 +2087,7 @@
+             encodings->scope = 0;
+             av_log(logctx, AV_LOG_ERROR, "Unsupported encoding type\n");
+         }
+-    } else if (
+-#if CONFIG_ZLIB
+-            encodings->compression.algo != MATROSKA_TRACK_ENCODING_COMP_ZLIB  &&
+-#endif
+-#if CONFIG_BZLIB
+-            encodings->compression.algo != MATROSKA_TRACK_ENCODING_COMP_BZLIB &&
+-#endif
+-            encodings->compression.algo != MATROSKA_TRACK_ENCODING_COMP_LZO   &&
+-            encodings->compression.algo != MATROSKA_TRACK_ENCODING_COMP_HEADERSTRIP) {
++    } else if (!matroska_supported_compression(encodings->compression.algo)) {
+         encodings->scope = 0;
+         av_log(logctx, AV_LOG_ERROR, "Unsupported encoding type\n");
+     } else if (track->codec_priv.size && encodings[0].scope & 2) {
+@@ -3126,6 +3139,11 @@
+         int extradata_offset = 0;
+         AVStream *st;
+         char* key_id_base64 = NULL;
++        int content_encoding_unsupported = 0;
++        int selected = !matroska->hdma_audio_only ||
++                       (track->type == MATROSKA_TRACK_TYPE_AUDIO &&
++                        (matroska->hdma_audio_stream < 0 ||
++                         matroska->hdma_audio_stream == s->nb_streams));
+ 
+         /* Apply some sanity checks. */
+         if (track->type != MATROSKA_TRACK_TYPE_VIDEO &&
+@@ -3187,11 +3205,15 @@
+             if (!track->audio.out_samplerate)
+                 track->audio.out_samplerate = track->audio.samplerate;
+         }
+-        ret = matroska_parse_content_encodings(track->encodings.elem,
+-                                               track->encodings.nb_elem,
+-                                               track, &key_id_base64, matroska->ctx);
+-        if (ret < 0)
+-            return ret;
++        if (selected) {
++            ret = matroska_parse_content_encodings(track->encodings.elem,
++                                                   track->encodings.nb_elem,
++                                                   track, &key_id_base64, matroska->ctx,
++                                                   matroska->hdma_audio_only);
++            content_encoding_unsupported = ret == AVERROR(ENOSYS);
++            if (ret < 0 && !content_encoding_unsupported)
++                return ret;
++        }
+ 
+         for (j = 0; ff_mkv_codec_tags[j].id != AV_CODEC_ID_NONE; j++) {
+             if (av_strstart(track->codec_id, ff_mkv_codec_tags[j].str, NULL)) {
+@@ -3232,6 +3254,8 @@
+         if (strcmp(track->language, "und"))
+             av_dict_set(&st->metadata, "language", track->language, 0);
+         av_dict_set(&st->metadata, "title", track->name, 0);
++        if (content_encoding_unsupported)
++            av_dict_set(&st->metadata, "hdma_unsupported_content_encoding", "1", 0);
+ 
+         if (track->time_scale < 0.01) {
+             av_log(matroska->ctx, AV_LOG_WARNING,
+@@ -3251,6 +3275,17 @@
+                                                       (AVRational){ 1, 1000000000 },
+                                                       st->time_base);
+ 
++        /* Retain every stream/index, but do not interpret codec-private data
++         * or content encodings outside the application's audio scope. */
++        if (!selected || content_encoding_unsupported) {
++            par->codec_type = track->type == MATROSKA_TRACK_TYPE_AUDIO ? AVMEDIA_TYPE_AUDIO :
++                              track->type == MATROSKA_TRACK_TYPE_VIDEO ? AVMEDIA_TYPE_VIDEO :
++                              track->type == MATROSKA_TRACK_TYPE_SUBTITLE ? AVMEDIA_TYPE_SUBTITLE :
++                              AVMEDIA_TYPE_DATA;
++            st->discard = AVDISCARD_ALL;
++            continue;
++        }
++
+         type = track->type;
+         if (par->codec_id == AV_CODEC_ID_WEBVTT)
+             type = MATROSKA_TRACK_TYPE_SUBTITLE;
+@@ -4844,9 +4879,27 @@
+     .read_close     = matroska_read_close,
+ };
+ #endif
++
++static const AVOption matroska_options[] = {
++    { "hdma_audio_only", "Limit codec/content processing to audio streams",
++      offsetof(MatroskaDemuxContext, hdma_audio_only), AV_OPT_TYPE_BOOL,
++      { .i64 = 0 }, 0, 1, AV_OPT_FLAG_DECODING_PARAM },
++    { "hdma_audio_stream", "Global audio stream index, or -1 for audio inventory",
++      offsetof(MatroskaDemuxContext, hdma_audio_stream), AV_OPT_TYPE_INT,
++      { .i64 = -1 }, -1, INT_MAX, AV_OPT_FLAG_DECODING_PARAM },
++    { NULL },
++};
+ 
++static const AVClass matroska_class = {
++    .class_name = "Matroska demuxer",
++    .item_name  = av_default_item_name,
++    .option    = matroska_options,
++    .version   = LIBAVUTIL_VERSION_INT,
++};
++
+ const FFInputFormat ff_matroska_demuxer = {
+     .p.name         = "matroska,webm",
++    .p.priv_class   = &matroska_class,
+     .p.long_name    = NULL_IF_CONFIG_SMALL("Matroska / WebM"),
+     .p.extensions   = "mkv,mk3d,mka,mks,webm",
+     .p.mime_type    = "audio/webm,audio/x-matroska,video/webm,video/x-matroska",

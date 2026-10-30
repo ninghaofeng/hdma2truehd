@@ -38,6 +38,7 @@ func fixture(t *testing.T) string {
 		"patches/ffmpeg/0001-truehd-7.1-and-short-streams.patch",
 		"patches/ffmpeg/0002-eac3-dependent-7.1.patch",
 		"patches/ffmpeg/0003-stream-info-discard.patch",
+		"patches/ffmpeg/0004-matroska-audio-scope.patch",
 		"docs/RELINKING.md", "go.mod", "go.sum", "goroot/LICENSE", "goroot/PATENTS",
 		".backend/ffmpeg-8.0.1.tar.xz", "cmd/hdma2truehd-ui/Info.plist",
 		"cmd/hdma2truehd/main.go",
@@ -160,6 +161,7 @@ func TestReleaseTargets(t *testing.T) {
 			exists(t, destination, "source/modules.txt", ui)
 			exists(t, destination, "source/ffmpeg-8.0.1-configured.tar.gz", true)
 			exists(t, destination, "source/patches/ffmpeg/0003-stream-info-discard.patch", true)
+			exists(t, destination, "source/patches/ffmpeg/0004-matroska-audio-scope.patch", true)
 			exists(t, destination, "hdma2truehd-link-cc", false)
 			want := "hdma2truehd"
 			if !cli {

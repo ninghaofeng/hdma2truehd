@@ -30,12 +30,13 @@ type Stream struct {
 // the conversion contract. Bits is reported effective precision, not internal
 // PCM storage width; ordinary DTS does not require MA's 16/24-bit invariant.
 type Info struct {
-	Path     string `json:"path"`
-	Stream   Stream `json:"stream"`
-	Rate     int    `json:"sample_rate"`
-	Bits     int    `json:"effective_bits"`
-	Language string `json:"language"`
-	DelayMS  int64  `json:"delay_ms"`
+	Path                       string `json:"path"`
+	Stream                     Stream `json:"stream"`
+	Rate                       int    `json:"sample_rate"`
+	Bits                       int    `json:"effective_bits"`
+	Language                   string `json:"language"`
+	DelayMS                    int64  `json:"delay_ms"`
+	ContentEncodingUnsupported bool   `json:"content_encoding_unsupported,omitempty"`
 }
 
 // OutputBase shares automatic naming between CLI and desktop. Container text
@@ -100,7 +101,8 @@ func fromNative(path string, info av.Info) Info {
 	stream := Stream{Index: info.Index, CodecType: "audio", Codec: info.Codec, Profile: info.Profile,
 		SampleRate: strconv.Itoa(info.Rate), Channels: info.Channels, Layout: info.Layout,
 		RawBits: strconv.Itoa(info.Bits)}
-	return Info{Path: path, Stream: stream, Rate: info.Rate, Bits: info.Bits, Language: info.Language, DelayMS: info.DelayMS}
+	return Info{Path: path, Stream: stream, Rate: info.Rate, Bits: info.Bits, Language: info.Language, DelayMS: info.DelayMS,
+		ContentEncodingUnsupported: info.ContentEncodingUnsupported}
 }
 
 // Track adds display metadata to a probe result. Duration is seconds and may be
@@ -179,7 +181,7 @@ func (i Info) ordinaryDTS() bool {
 // checks must still run: ordinary DTS is never eligible for TrueHD.
 // Its lossy decoder representation does not establish an effective bit depth.
 func (i Info) ValidateInput() error {
-	if !i.ordinaryDTS() {
+	if !i.ordinaryDTS() || i.ContentEncodingUnsupported {
 		return i.ValidateSource()
 	}
 	if i.Rate != 48000 || i.Stream.Channels != 6 || i.Stream.Layout != "5.1(side)" {
@@ -204,6 +206,9 @@ func (i Info) ValidateAC3() error {
 // formats requires each one to pass, without silently dropping an output.
 // kbps applies only to E-AC-3; "thd" is the output suffix for TrueHD.
 func (i Info) ValidateOutput(format string, kbps int) error {
+	if i.ContentEncodingUnsupported {
+		return i.ValidateSource()
+	}
 	switch format {
 	case "truehd", "thd":
 		if i.ordinaryDTS() {
@@ -222,6 +227,9 @@ func (i Info) ValidateOutput(format string, kbps int) error {
 // ValidateSource retains the MA-only source contract for lossless TrueHD.
 // Use ValidateInput for inventory and ValidateOutput for format eligibility.
 func (i Info) ValidateSource() error {
+	if i.ContentEncodingUnsupported {
+		return &UnsupportedError{Code: "content_encoding", Message: "selected MKV audio uses unsupported content encoding (compression/encryption or encoding chain)"}
+	}
 	// Match confirmed lossless profiles exactly; a generic "DTS:X" label is
 	// not proof of MA. Accepted X profiles still use only compatible channels,
 	// without parsing objects or rendering the spatial extension.

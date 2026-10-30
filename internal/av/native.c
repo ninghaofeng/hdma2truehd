@@ -75,6 +75,10 @@ static int cancelled(void *opaque)
 
 static int fail(char *message, const char *stage, int ret)
 {
+    if (ret == HDMA_ERROR_CONTENT_ENCODING) {
+        snprintf(message, 512, "%s", stage);
+        return ret;
+    }
     char detail[AV_ERROR_MAX_STRING_SIZE];
     av_strerror(ret, detail, sizeof(detail));
     snprintf(message, 512, "%s: %s", stage, detail);
@@ -113,6 +117,8 @@ static int open_container(Operation *op, const char *path, int index, int invent
     AVDictionary *options = NULL;
     av_dict_set(&options, "protocol_whitelist", "file", 0);
     av_dict_set(&options, "err_detect", "explode", 0);
+    av_dict_set(&options, "hdma_audio_only", "1", 0);
+    av_dict_set_int(&options, "hdma_audio_stream", inventory ? -1 : index, 0);
     ret = avformat_open_input(&op->input, path, NULL, &options);
     av_dict_free(&options);
     if (ret < 0)
@@ -132,13 +138,16 @@ static int open_container(Operation *op, const char *path, int index, int invent
             return AVERROR_INVALIDDATA;
         op->stream_index = index;
     }
+    unsigned active = 0;
     for (unsigned i = 0; i < op->input->nb_streams; i++) {
         AVStream *stream = op->input->streams[i];
         stream->discard = stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
+            !av_dict_get(stream->metadata, "hdma_unsupported_content_encoding", NULL, 0) &&
             (inventory || i == (unsigned)op->stream_index) ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
+        active += stream->discard != AVDISCARD_ALL;
     }
     op->stage = "read stream information";
-    if ((ret = avformat_find_stream_info(op->input, NULL)) < 0)
+    if (active && (ret = avformat_find_stream_info(op->input, NULL)) < 0)
         return ret;
     return cancelled(op) ? AVERROR_EXIT : 0;
 }
@@ -149,6 +158,11 @@ static int open_input(Operation *op, const char *path, int index)
     if (ret < 0)
         return ret;
     op->stage = "validate selected audio stream";
+    if (av_dict_get(op->input->streams[op->stream_index]->metadata,
+                    "hdma_unsupported_content_encoding", NULL, 0)) {
+        op->stage = "unsupported Matroska audio content encoding (compression/encryption or encoding chain)";
+        return HDMA_ERROR_CONTENT_ENCODING;
+    }
     AVCodecParameters *par = op->input->streams[op->stream_index]->codecpar;
     if (par->codec_id == AV_CODEC_ID_NONE || par->sample_rate <= 0 ||
         !av_channel_layout_check(&par->ch_layout))
@@ -164,6 +178,8 @@ static int describe_stream(AVStream *stream, HDMAInfo *info)
     info->rate = par->sample_rate;
     info->bits = par->bits_per_raw_sample ? par->bits_per_raw_sample : par->bits_per_coded_sample;
     info->channels = par->ch_layout.nb_channels;
+    info->content_encoding_unsupported = !!av_dict_get(stream->metadata,
+        "hdma_unsupported_content_encoding", NULL, 0);
     snprintf(info->codec, sizeof(info->codec), "%s", avcodec_get_name(par->codec_id));
     snprintf(info->profile, sizeof(info->profile), "%s", profile ? profile : "");
     AVDictionaryEntry *language = av_dict_get(stream->metadata, "language", NULL, 0);

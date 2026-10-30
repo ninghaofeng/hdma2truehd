@@ -22,12 +22,14 @@ presentation uses both substreams. No new 5.1 downmix presentation is generated
 for 7.1, and no Dolby Digital companion/core stream is generated.
 
 The Go tool checks the linked library's build marker
-`8.0.1-hdma2truehd-71-v5`. Version 3 enabled the Matroska demuxer for explicitly
+`8.0.1-hdma2truehd-71-v6`. Version 3 enabled the Matroska demuxer for explicitly
 selected MKV audio tracks, without enabling video decoding. Version 4 also
 enables stock AC-3 encoding/decoding and raw AC-3 muxing/demuxing. Rebuild older
 static libraries; adding AC-3 does not require another upstream codec patch.
 Version 5 makes stream-info probing respect explicitly discarded tracks,
 as described below.
+Version 6 applies audio scope during Matroska header parsing, before stream-info
+probing can set discard flags.
 This marker is a version check, not cryptographic
 provenance or a substitute for testing. `doctor` performs actual in-process
 24-bit PCM round trips for each supported layout.
@@ -46,6 +48,25 @@ inventory entries are preserved. Video, subtitle and attachment codecs are
 not requirements for converting the selected audio. No log-text filters or
 global warning suppression are used; selected audio and container errors
 still propagate.
+
+## Matroska header content-encoding isolation
+
+`0004-matroska-audio-scope.patch` adds opt-in Matroska demuxer options:
+`hdma_audio_only=1` and `hdma_audio_stream=INDEX` (`-1` inventories audio).
+The bridge sets both before `avformat_open_input`. Header parsing retains all
+global stream indices but does not interpret content encodings or codec-private
+data for video, subtitles or unselected audio. For example, zlib-compressed
+subtitles no longer emit `Unsupported encoding type` in this minimal build,
+which does not enable zlib/bzip2. No message-text filter is used. Without
+these options, upstream behavior is unchanged.
+
+Audio inventory marks unsupported compression, encryption, encoding chains or
+scopes as a per-track incompatibility instead of attempting to probe those
+packets. Other audio remains available. Selecting an affected track explicitly
+fails before decoding or output publication. Supported audio content encodings
+retain upstream handling; container structure errors and selected audio
+decoding errors still propagate. This does not add decryption, zlib/bzip2
+support, video decoding or subtitle conversion.
 
 ## E-AC-3 dependent-substream patch
 

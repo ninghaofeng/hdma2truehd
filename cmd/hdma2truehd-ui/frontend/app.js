@@ -28,7 +28,7 @@ const translations = {
     track: "音轨", default: "默认", unsupported: "不可转换", eac3Unavailable: "无法输出 E-AC-3", available: "可用", unavailableFormat: "不可用",
     samples: "源采样 / 声道", decoded: "解码采样（含延迟和补零）", choose: "请选择音轨和输出格式。",
     unavailable: "桌面运行时未就绪，请通过桌面应用打开此界面。", busyError: "转换或读取音轨时不能添加文件。",
-    selectionDisabled: "转换过程中不能修改音轨选择。"
+    selectionDisabled: "转换过程中不能修改音轨选择。", formatDetails: "格式限制"
   },
   en: {
     title: "Audio conversion", language: "Language", drop: "Drop DTS files or MKV movies",
@@ -57,7 +57,7 @@ const translations = {
     track: "Track", default: "default", unsupported: "Cannot convert", eac3Unavailable: "E-AC-3 unavailable", available: "available", unavailableFormat: "unavailable",
     samples: "source samples/channel", decoded: "decoded samples (with delay/padding)", choose: "Select tracks and at least one output format.",
     unavailable: "Desktop runtime unavailable. Open this interface using the desktop application.", busyError: "Cannot add files while inspecting or converting.",
-    selectionDisabled: "Track selection is locked during conversion."
+    selectionDisabled: "Track selection is locked during conversion.", formatDetails: "Format limits"
   }
 };
 
@@ -191,6 +191,7 @@ function trackProblem(track) {
 
 function reasonMessages() {
   return language === "zh" ? {
+    content_encoding: "该 MKV 音轨使用当前后端不支持的内容压缩、加密或编码链，无法安全转换。",
     codec: "仅支持 DTS-HD MA 或符合限制的普通 DTS；当前编码不支持转换。",
     profile: "仅接受已确认的 DTS-HD MA 或普通 DTS；不支持 HRA 或未知 profile。",
     layout: "仅支持 5.1(side)、5.1（后环绕）和标准 7.1；不自动重映射或降混。",
@@ -202,6 +203,7 @@ function reasonMessages() {
     ac3_format: "AC-3 仅支持 48 kHz 5.1(side)，固定 640 kb/s，不重映射或重采样。",
     dts_format: "普通 DTS 仅支持 48 kHz 5.1(side)，输出 E-AC-3 或 AC-3。"
   } : {
+    content_encoding: "This MKV audio track uses unsupported content compression, encryption or an encoding chain; conversion is unsafe.",
     codec: "Only DTS-HD MA or eligible ordinary DTS sources are supported.",
     profile: "Only confirmed DTS-HD MA or ordinary DTS profiles are supported; no HRA or unknown profiles.",
     layout: "Only 5.1(side), rear 5.1 and standard 7.1 are supported; no automatic remapping/downmix.",
@@ -226,6 +228,7 @@ function clock(seconds) {
 }
 
 function renderInputs() {
+  const expanded = new Set([...$("inputs").querySelectorAll(".track-issues[open]")].map(details => details.dataset.track));
   const fragment = document.createDocumentFragment();
   for (const input of inputs) {
     const file = node("div", undefined, "input-file");
@@ -235,11 +238,13 @@ function renderInputs() {
       const info = track.info;
       const stream = info.stream;
       const id = keyFor(input.path, stream.index);
-      const label = node("label", undefined, "track");
+      const row = node("div", undefined, "track");
+      const label = node("label", undefined, "track-choice");
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = selected.has(id);
       const problem = trackProblem(track);
+      if (checkbox.checked) row.classList.add("is-selected");
       // Keep selected incompatible tracks removable rather than trapping the selection.
       checkbox.disabled = (!!problem && !checkbox.checked) || busy || state.running;
       checkbox.addEventListener("change", () => {
@@ -247,20 +252,39 @@ function renderInputs() {
         renderInputs(); renderState();
       });
       const details = node("div", undefined, "track-details");
+      const summary = node("div", undefined, "track-summary");
       const title = `${t("track")} ${stream.index} · ${stream.profile || stream.codec_name}${track.title ? " · " + track.title : ""}`;
-      details.append(node("div", title, "track-title"));
+      summary.append(node("div", title, "track-title"));
       const duration = track.duration > 0 ? `${Math.floor(track.duration / 60)}:${String(Math.floor(track.duration % 60)).padStart(2, "0")}` : "";
-      details.append(node("div", [track.language, stream.channel_layout || `${stream.channels} ch`,
+      summary.append(node("div", [track.language, stream.channel_layout || `${stream.channels} ch`,
         info.sample_rate ? `${info.sample_rate} Hz` : "", info.effective_bits ? `${info.effective_bits} bit` : "",
         duration, track.default ? t("default") : ""].filter(Boolean).join(" · "), "track-meta"));
+      details.append(summary);
+      label.append(checkbox, details);
+      const formats = node("div", undefined, "track-formats");
+      const reasons = new Map();
       for (const [format, name] of outputFormats) {
         const {reason, code} = formatProblem(track, format);
         const fixed = format === "ac3" ? " · 640 kb/s" : format === "eac3" && stream.profile === "DTS" ? " · 1024 kb/s" : "";
-        details.append(node("div", `${name}: ${reason ? `${t("unavailableFormat")} — ${describeTrackProblem(track, reason, code)}` : t("available") + fixed}`, reason ? "format-reason" : "track-meta"));
+        const badge = node("span", `${name} · ${reason ? t("unavailableFormat") : t("available") + fixed}`, `format-badge${reason ? " unavailable" : ""}`);
+        if (reason) {
+          const text = reasonMessages()[code] || reason;
+          badge.title = `${name}: ${text}`;
+          if (!reasons.has(text)) reasons.set(text, []);
+          reasons.get(text).push(name);
+        }
+        formats.append(badge);
       }
-      if (problem) details.append(node("p", `${t("unsupported")}: ${problem}`, "problem"));
-      label.append(checkbox, details);
-      file.append(label);
+      if (reasons.size) {
+        const issues = node("details", undefined, `track-issues${problem ? " incompatible" : ""}`);
+        issues.dataset.track = id;
+        issues.open = expanded.has(id);
+        issues.append(node("summary", `${t(problem ? "unsupported" : "formatDetails")} (${reasons.size})`));
+        for (const [reason, names] of reasons) issues.append(node("div", `${names.join(" / ")}: ${reason}`, "format-reason"));
+        formats.append(issues);
+      }
+      row.append(label, formats);
+      file.append(row);
     }
     fragment.append(file);
   }

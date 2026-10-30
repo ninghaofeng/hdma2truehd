@@ -77,6 +77,26 @@ func TestOutputPolicies(t *testing.T) {
 	}
 }
 
+func TestUnsupportedMKVContentEncoding(t *testing.T) {
+	for _, profile := range []string{"DTS-HD MA", "DTS"} {
+		info := sourceInfo()
+		info.Stream.Profile = profile
+		info.ContentEncodingUnsupported = true
+		for _, validate := range []func() error{
+			info.ValidateInput, info.ValidateSource,
+			func() error { return info.ValidateOutput("thd", 0) },
+			func() error { return info.ValidateOutput("eac3", 0) },
+			func() error { return info.ValidateOutput("ac3", 0) },
+		} {
+			err := validate()
+			var unsupported *UnsupportedError
+			if !errors.As(err, &unsupported) || unsupported.Code != "content_encoding" {
+				t.Fatalf("%s: wrong content encoding rejection: %v", profile, err)
+			}
+		}
+	}
+}
+
 func TestAC3RejectsDamagedOutput(t *testing.T) {
 	dir := t.TempDir()
 	path, output := filepath.Join(dir, "source.wav"), filepath.Join(dir, "output.ac3")

@@ -30,16 +30,29 @@ button:focus-visible, select:focus-visible, input:focus-visible, .drop:focus-vis
 .section-head button { padding: 6px 12px; }
 .muted, small { color: #65728a; }
 .small { font-size: 12px; }
-.input-file { border-top: 1px solid #e9edf4; padding-top: 14px; margin-top: 14px; }
+.input-file { border-top: 1px solid #e9edf4; padding-top: 10px; margin-top: 10px; }
+.input-file:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+.input-file > .file-path { margin: 2px 0 6px; }
 .file-name { font-weight: 600; overflow-wrap: anywhere; }
 .file-path { color: #7a879d; font-size: 11px; overflow-wrap: anywhere; margin: 5px 0 10px; }
-.track { display: flex; gap: 10px; align-items: flex-start; padding: 12px; margin: 7px 0; background: #f7f9fc; border-radius: 8px; }
-.track input { margin-top: 3px; }
+.track { padding: 7px 9px; margin: 4px 0; background: #f7f9fc; border: 1px solid transparent; border-radius: 6px; }
+.track.is-selected { background: #eef3ff; border-color: #c5d5fc; }
+.track-choice { display: flex; gap: 8px; align-items: flex-start; }
+.track input { margin: 2px 0 0; }
 /* Permit long titles/paths to wrap instead of imposing a flex item's min-content width. */
 .track-details { flex: 1; min-width: 0; }
-.track-title { font-weight: 600; overflow-wrap: anywhere; }
+.track-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.track-title { flex: 1 1 240px; min-width: 0; font-size: 13px; line-height: 1.5; font-weight: 600; overflow-wrap: anywhere; }
+.track-summary .track-meta { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.track-formats { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 4px 0 0 24px; }
+.format-badge { font-size: 11px; line-height: 1.5; padding: 1px 6px; border: 1px solid #d5e6dc; border-radius: 4px; background: #edf5f0; color: #326046; }
+.format-badge.unavailable { background: #fff3ec; border-color: #efd8c9; color: #9c3e21; }
+.track-issues { min-width: 0; }
+.track-issues[open] { flex-basis: 100%; }
+.track-issues summary { width: fit-content; cursor: pointer; color: #65728a; font-size: 11px; }
+.track-issues.incompatible summary { color: #9c3e21; }
 .track-meta { font-size: 12px; line-height: 1.8; margin-top: 4px; color: #65728a; }
-.format-reason { font-size: 12px; line-height: 1.8; margin-top: 4px; color: #9c3e21; overflow-wrap: anywhere; }
+.format-reason { font-size: 12px; line-height: 1.45; margin-top: 3px; color: #9c3e21; overflow-wrap: anywhere; }
 .problem { font-size: 12px; color: #9c3e21; overflow-wrap: anywhere; margin: 6px 0 0; }
 .settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; align-items: start; }
 fieldset { margin: 0; padding: 0; border: 0; }

@@ -62,6 +62,7 @@ const char *hdma_error_kind(int code)
     if (code == AVERROR(ENOMEM)) return "memory";
     if (code == AVERROR_INVALIDDATA) return "corrupt_data";
     if (code == AVERROR_STREAM_NOT_FOUND) return "track_missing";
+    if (code == HDMA_ERROR_CONTENT_ENCODING) return "unsupported_content_encoding";
     if (code == AVERROR_DECODER_NOT_FOUND || code == AVERROR_ENCODER_NOT_FOUND ||
         code == AVERROR_DEMUXER_NOT_FOUND || code == AVERROR_MUXER_NOT_FOUND)
         return "codec_unavailable";
