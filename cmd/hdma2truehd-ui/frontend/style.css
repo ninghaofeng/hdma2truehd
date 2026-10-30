@@ -39,6 +39,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, .drop:focus-vis
 .track-details { flex: 1; min-width: 0; }
 .track-title { font-weight: 600; overflow-wrap: anywhere; }
 .track-meta { font-size: 12px; line-height: 1.8; margin-top: 4px; color: #65728a; }
+.format-reason { font-size: 12px; line-height: 1.8; margin-top: 4px; color: #9c3e21; overflow-wrap: anywhere; }
 .problem { font-size: 12px; color: #9c3e21; overflow-wrap: anywhere; margin: 6px 0 0; }
 .settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; align-items: start; }
 fieldset { margin: 0; padding: 0; border: 0; }

@@ -97,6 +97,23 @@ func (b Backend) SelfTest(ctx context.Context) (err error) {
 			if err := validateEAC3(ctx, encoded, stats); err != nil {
 				return err
 			}
+			if layout == "5.1(side)" {
+				ac3Output := filepath.Join(dir, "output.ac3")
+				ac3Stats, err := av.EncodeAC3(ctx, source, ac3Output, nativeInfo(input))
+				if err != nil {
+					return fmt.Errorf("AC-3 self-test encode: %w", err)
+				}
+				ac3, err := b.Probe(ctx, ac3Output)
+				if err != nil {
+					return err
+				}
+				if err := matchingLossy(input, ac3, "ac3"); err != nil {
+					return err
+				}
+				if err := validateLossy(ctx, ac3, ac3Stats); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil

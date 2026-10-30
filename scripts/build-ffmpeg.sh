@@ -53,7 +53,7 @@ fi
 # network, shared libraries and programs keeps system packages from silently
 # changing runtime dependencies. PCM/WAV support exists for doctor and tests.
 # The version marker is checked by the Go bridge to reject a stock backend.
-# FFmpeg's ac3 parser also handles E-AC-3; it does not require an AC-3 encoder.
+# FFmpeg's ac3 parser handles both AC-3 and E-AC-3.
 ./configure \
     --cc="$compiler" \
     --disable-everything --disable-autodetect --disable-doc --disable-network \
@@ -62,13 +62,13 @@ fi
     --disable-avdevice --disable-avfilter --disable-swscale \
     --enable-swresample \
     --enable-protocol=file \
-    --enable-decoder=dca,truehd,eac3,pcm_s16le,pcm_s24le,pcm_s32le \
-    --enable-encoder=truehd,eac3,pcm_s16le,pcm_s24le,pcm_s32le \
+    --enable-decoder=dca,truehd,eac3,ac3,pcm_s16le,pcm_s24le,pcm_s32le \
+    --enable-encoder=truehd,eac3,ac3,pcm_s16le,pcm_s24le,pcm_s32le \
     --enable-parser=dca,mlp,ac3 \
-    --enable-demuxer=dts,dtshd,truehd,eac3,matroska,wav,pcm_s16le,pcm_s24le,pcm_s32le \
-    --enable-muxer=truehd,eac3,wav,pcm_s16le,pcm_s24le,pcm_s32le \
+    --enable-demuxer=dts,dtshd,truehd,eac3,ac3,matroska,wav,pcm_s16le,pcm_s24le,pcm_s32le \
+    --enable-muxer=truehd,eac3,ac3,wav,pcm_s16le,pcm_s24le,pcm_s32le \
     --extra-ldflags="$extra_ldflags" \
     --extra-cflags="$extra_cflags" \
-    --extra-version=hdma2truehd-71-v3
+    --extra-version=hdma2truehd-71-v4
 make -j"${JOBS:-2}"
 printf '\nStatic libraries built in %s\nRun go test ./... and bash scripts/build-release.sh.\n' "$source_dir"

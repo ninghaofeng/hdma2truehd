@@ -33,7 +33,74 @@ func (b fakeBackend) Convert(ctx context.Context, in, out string, options audio.
 	if b.convert != nil {
 		return b.convert(ctx, in, out, options)
 	}
-	return audio.Result{Output: out, Verified: strings.HasSuffix(out, ".thd"), Validated: strings.HasSuffix(out, ".eac3"), Lossy: strings.HasSuffix(out, ".eac3"), Samples: 1536, DecodedSamples: 3072}, nil
+	lossy := strings.HasSuffix(out, ".eac3") || strings.HasSuffix(out, ".ac3")
+	return audio.Result{Output: out, Verified: strings.HasSuffix(out, ".thd"), Validated: lossy, Lossy: lossy, Samples: 1536, DecodedSamples: 3072}, nil
+}
+
+func TestSourceFormatScopes(t *testing.T) {
+	dir := t.TempDir()
+	for _, tt := range []struct {
+		name, profile, layout string
+		rate, channels        int
+		truehd, eac3, ac3     bool
+	}{
+		{"MA51", "DTS-HD MA", "5.1(side)", 48000, 6, true, true, true},
+		{"MA71", "DTS-HD MA", "7.1", 48000, 8, true, true, false},
+		{"MARear", "DTS-HD MA", "5.1", 48000, 6, true, false, false},
+		{"MA96", "DTS-HD MA", "5.1(side)", 96000, 6, true, false, false},
+		{"DTS51", "DTS", "5.1(side)", 48000, 6, false, true, true},
+		{"DTS71", "DTS", "7.1", 48000, 8, false, false, false},
+		{"DTSRear", "DTS", "5.1", 48000, 6, false, false, false},
+		{"DTS96", "DTS", "5.1(side)", 96000, 6, false, false, false},
+		{"HRA", "DTS-HD HRA", "5.1(side)", 48000, 6, false, false, false},
+		{"Unknown", "", "5.1(side)", 48000, 6, false, false, false},
+		{"Case", "dts", "5.1(side)", 48000, 6, false, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			info := audio.Info{Path: filepath.Join(dir, tt.name+".dts"), Rate: tt.rate, Bits: 24,
+				Stream: audio.Stream{Codec: "dts", Profile: tt.profile, Layout: tt.layout, Channels: tt.channels}}
+			if tt.profile == "DTS" {
+				info.Bits = 32
+			}
+			s := New(fakeBackend{tracks: []audio.Track{{Info: info}}, probe: func(string, int) (audio.Info, error) { return info, nil }}, nil)
+			inputs, err := s.Inspect(t.Context(), []string{info.Path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			track := inputs[0].Tracks[0]
+			if (track.Problem == "") != (tt.truehd || tt.eac3 || tt.ac3) ||
+				(track.TrueHDProblem == "") != tt.truehd || (track.EAC3Problem == "") != tt.eac3 || (track.AC3Problem == "") != tt.ac3 {
+				t.Fatalf("incorrect inventory: %+v", track)
+			}
+			for _, format := range []struct {
+				name    string
+				allowed bool
+			}{{"thd", tt.truehd}, {"eac3", tt.eac3}, {"ac3", tt.ac3}} {
+				req := Request{Tracks: []Selection{{info.Path, 0}}, TrueHD: format.name == "thd", EAC3: format.name == "eac3", AC3: format.name == "ac3"}
+				if req.EAC3 {
+					req.Bitrate51, req.Bitrate71 = 640, 1280
+				}
+				jobs, err := s.plan(t.Context(), req)
+				if (err == nil) != format.allowed {
+					t.Fatalf("%s: jobs=%+v err=%v", format.name, jobs, err)
+				}
+				if err == nil && (len(jobs) != 1 || jobs[0].Format != format.name) {
+					t.Fatalf("%s: %+v", format.name, jobs)
+				}
+				if err == nil && format.name == "eac3" && tt.profile == "DTS" && jobs[0].Bitrate != 1024 {
+					t.Fatalf("ordinary DTS bitrate not fixed: %+v", jobs)
+				}
+				if err == nil && format.name != "eac3" && jobs[0].Bitrate != 0 {
+					t.Fatalf("E-AC-3 bitrate leaked: %+v", jobs)
+				}
+			}
+			if tt.profile == "DTS" && tt.eac3 {
+				if _, err := s.plan(t.Context(), Request{Tracks: []Selection{{info.Path, 0}}, TrueHD: true, EAC3: true, AC3: true}); err == nil {
+					t.Fatal("silently skipped ordinary DTS TrueHD output")
+				}
+			}
+		})
+	}
 }
 
 func waitQueue(t *testing.T, s *Service) State {

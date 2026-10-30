@@ -59,24 +59,25 @@ static void eac3_close(HDMAEAC3 *op)
     av_free(op);
 }
 
-static int eac3_open(const char *path, int channels, int bitrate,
+static int eac3_open(const char *path, int channels, int bitrate, int ac3,
                    uintptr_t handle, HDMAEAC3 **result, char *error)
 {
     *result = NULL;
-    if ((channels != 6 && channels != 8) || bitrate % 32000 ||
+    if ((ac3 && (channels != 6 || bitrate != 640000)) ||
+        (channels != 6 && channels != 8) || bitrate % 32000 ||
         bitrate < (channels == 8 ? 768000 : 384000) ||
         bitrate > (channels == 8 ? 1536000 : 1024000))
-        return report(error, "E-AC-3 configuration", AVERROR(EINVAL));
+        return report(error, "AC-3 / E-AC-3 configuration", AVERROR(EINVAL));
     HDMAEAC3 *op = av_mallocz(sizeof(*op));
     if (!op)
-        return report(error, "allocate E-AC-3 operation", AVERROR(ENOMEM));
+        return report(error, "allocate AC-3 / E-AC-3 operation", AVERROR(ENOMEM));
     op->handle = handle;
     op->channels = channels;
     op->streams = channels == 8 ? 2 : 1;
     int ret = av_channel_layout_from_string(&op->layout, channels == 8 ? "7.1" : "5.1(side)");
     if (ret < 0)
         goto failed;
-    const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_EAC3);
+    const AVCodec *codec = avcodec_find_encoder(ac3 ? AV_CODEC_ID_AC3 : AV_CODEC_ID_EAC3);
     if (!codec) {
         ret = AVERROR_ENCODER_NOT_FOUND;
         goto failed;
@@ -110,14 +111,14 @@ static int eac3_open(const char *path, int channels, int bitrate,
             goto failed;
         }
     }
-    /* DTS frame boundaries need not match E-AC-3's 1536-sample units.
+    /* DTS frame boundaries need not match AC-3/E-AC-3's 1536-sample units.
      * One shared FIFO keeps both encoders on identical source boundaries. */
     op->fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLTP, channels, 1536);
     if (!op->fifo) {
         ret = AVERROR(ENOMEM);
         goto failed;
     }
-    if ((ret = avformat_alloc_output_context2(&op->output, NULL, "eac3", path)) < 0)
+    if ((ret = avformat_alloc_output_context2(&op->output, NULL, ac3 ? "ac3" : "eac3", path)) < 0)
         goto failed;
     op->output->interrupt_callback = (AVIOInterruptCB){interrupted, op};
     AVStream *stream = avformat_new_stream(op->output, NULL);
@@ -140,7 +141,7 @@ static int eac3_open(const char *path, int channels, int bitrate,
     return 0;
 failed:
     hdma_eac3_close(op);
-    return report(error, "open E-AC-3 encoder/output", ret);
+    return report(error, "open AC-3 / E-AC-3 encoder/output", ret);
 }
 
 static AVFrame *new_frame(const AVChannelLayout *layout, int count)
@@ -272,18 +273,18 @@ static int append(HDMAEAC3 *op, const unsigned char *pcm, int count)
 static int eac3_write(HDMAEAC3 *op, const unsigned char *pcm, int size, char *error)
 {
     if (size <= 0 || size % (op->channels * 4))
-        return report(error, "E-AC-3 PCM frame alignment", AVERROR(EINVAL));
+        return report(error, "AC-3 / E-AC-3 PCM frame alignment", AVERROR(EINVAL));
     int count = size / (op->channels * 4);
     int ret = append(op, pcm, count);
     if (ret < 0)
-        return report(error, "encode E-AC-3 PCM", ret);
+        return report(error, "encode AC-3 / E-AC-3 PCM", ret);
     op->samples += count;
     return 0;
 }
 
 static int eac3_finish(HDMAEAC3 *op, uint64_t *samples, uint64_t *decoded, char *error)
 {
-    /* Raw E-AC-3 has no gapless trim metadata. Flush the MDCT's 256-sample
+    /* Raw AC-3/E-AC-3 has no gapless trim metadata. Flush the MDCT's 256-sample
      * delay explicitly so the source tail survives, then pad the final unit.
      * Validation checks the resulting exact length rather than hiding padding. */
     int ret = op->samples ? append(op, NULL, 256) : AVERROR_INVALIDDATA;
@@ -311,7 +312,7 @@ static int eac3_finish(HDMAEAC3 *op, uint64_t *samples, uint64_t *decoded, char 
     }
     if (ret >= 0) ret = avio_closep(&op->output->pb);
     if (ret < 0)
-        return report(error, "finalize E-AC-3 output", ret);
+        return report(error, "finalize AC-3 / E-AC-3 output", ret);
     *samples = op->samples;
     *decoded = op->frames * 1536;
     return 0;
@@ -323,7 +324,16 @@ int hdma_eac3_open(const char *path, int channels, int bitrate,
                    uintptr_t handle, HDMAEAC3 **result, char *error)
 {
     uintptr_t previous = hdma_log_enter(handle);
-    int ret = eac3_open(path, channels, bitrate, handle, result, error);
+    int ret = eac3_open(path, channels, bitrate, 0, handle, result, error);
+    hdma_log_leave(previous);
+    return ret;
+}
+
+int hdma_ac3_open(const char *path, int channels, uintptr_t handle,
+                  HDMAEAC3 **result, char *error)
+{
+    uintptr_t previous = hdma_log_enter(handle);
+    int ret = eac3_open(path, channels, 640000, 1, handle, result, error);
     hdma_log_leave(previous);
     return ret;
 }

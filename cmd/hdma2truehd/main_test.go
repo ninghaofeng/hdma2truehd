@@ -72,6 +72,8 @@ func TestOutputFormats(t *testing.T) {
 	}
 	for _, tt := range []struct{ output, format string }{
 		{"", "aac"}, {"output.thd", "both"}, {"output.thd", "eac3"}, {"output.eac3", "truehd"},
+		{"", ""}, {"", "eac3,eac3"}, {"", "truehd,thd"}, {"", "eac3,"},
+		{"output.ac3", "eac3,ac3"}, {"output.thd", "all"}, {"output.eac3", "ac3"},
 	} {
 		if _, err := planJobs([]string{input}, tt.output, "", tt.format); err == nil {
 			t.Fatalf("accepted %+v", tt)
@@ -85,6 +87,49 @@ func TestOutputFormats(t *testing.T) {
 	if code != 0 || !strings.Contains(out.String(), "VALIDATED (LOSSY)") ||
 		strings.Contains(out.String(), "VERIFIED:") || !strings.Contains(out.String(), "0 unverified") {
 		t.Fatalf("misleading lossy result: code=%d %s", code, &out)
+	}
+}
+
+func TestAC3FormatPlanning(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "source.dts")
+	for _, tt := range []struct {
+		format     string
+		extensions []string
+	}{
+		{"ac3", []string{".ac3"}},
+		{"eac3,ac3", []string{".eac3", ".ac3"}},
+		{"ac3,truehd", []string{".ac3", ".thd"}},
+		{"thd", []string{".thd"}},
+		{"all", []string{".thd", ".eac3", ".ac3"}},
+	} {
+		jobs, err := planJobs([]string{input}, "", dir, tt.format)
+		if err != nil || len(jobs) != len(tt.extensions) {
+			t.Fatalf("%s: %+v %v", tt.format, jobs, err)
+		}
+		for i, extension := range tt.extensions {
+			if filepath.Ext(jobs[i].output) != extension {
+				t.Fatalf("%s: %+v", tt.format, jobs)
+			}
+		}
+	}
+	jobs := []job{{input, "output.thd"}, {input, "output.eac3"}, {input, "output.ac3"}}
+	var out, diagnostics bytes.Buffer
+	code := processJobs(t.Context(), jobs, audio.Options{EAC3Bitrate: 960}, 1,
+		func(_ context.Context, _, output string, options audio.Options) (audio.Result, error) {
+			want := 0
+			if strings.HasSuffix(output, ".eac3") {
+				want = 960
+			}
+			if options.EAC3Bitrate != want {
+				t.Errorf("%s: bitrate %d, want %d", output, options.EAC3Bitrate, want)
+			}
+			lossy := lossyOutput(output)
+			return audio.Result{Output: output, Verified: !lossy, Validated: lossy, Lossy: lossy}, nil
+		}, &out, &diagnostics)
+	if code != 0 || !strings.Contains(diagnostics.String(), "AC-3/E-AC-3 is LOSSY") ||
+		!strings.Contains(out.String(), "VALIDATED (LOSSY): output.ac3") {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, &out, &diagnostics)
 	}
 }
 
@@ -103,6 +148,8 @@ func TestRunArguments(t *testing.T) {
 		{[]string{"convert", "--jobs", "9", "source.dts"}, 2},
 		{[]string{"convert", "--jobs", "-1", "source.dts"}, 2},
 		{[]string{"convert", "--jobs", "invalid", "source.dts"}, 2},
+		{[]string{"convert", "--format", "ac3", "--eac3-bitrate", "640", "source.dts"}, 2},
+		{[]string{"convert", "--format", "truehd,ac3", "--eac3-bitrate", "960", "source.dts"}, 2},
 	} {
 		var out, errOut bytes.Buffer
 		if code := run(context.Background(), tt.args, &out, &errOut); code != tt.code {
@@ -123,6 +170,25 @@ func TestVersionAndCopyright(t *testing.T) {
 				t.Fatalf("%v: missing %q: %s", args, want, out.String())
 			}
 		}
+	}
+}
+
+func TestFormatHelpAndDoctor(t *testing.T) {
+	var out, diagnostics bytes.Buffer
+	if code := run(t.Context(), []string{"--help"}, &out, &diagnostics); code != 0 {
+		t.Fatalf("help: exit %d: %s", code, &diagnostics)
+	}
+	for _, want := range []string{"both=truehd,eac3", "all=truehd,eac3,ac3", "e.g. eac3,ac3", "ordinary DTS always uses 1024"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("help missing %q", want)
+		}
+	}
+	out.Reset()
+	if code := run(t.Context(), []string{"doctor"}, &out, &diagnostics); code != 0 {
+		t.Fatalf("doctor: exit %d: %s", code, &diagnostics)
+	}
+	if !strings.Contains(out.String(), "AC-3 5.1(side) decode/format/length self-tests") {
+		t.Fatalf("doctor omits AC-3 self-test: %s", &out)
 	}
 }
 

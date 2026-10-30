@@ -4,15 +4,26 @@
 
 ## 简体中文
 
-将 **DTS-HD MA 音频（含 DTS:X 兼容声道）转换为 Dolby TrueHD `.thd` 或 E-AC-3 `.eac3`** 的实验性 Go 命令行及桌面工具，
+将 **DTS-HD MA 音频（含 DTS:X 兼容声道）转换为 Dolby TrueHD `.thd`、E-AC-3 `.eac3` 或 AC-3 `.ac3`**，并支持普通 DTS 5.1 有损输出的实验性 Go 命令行及桌面工具，
 面向 macOS 和 Windows。通过 **cgo 静态链接 FFmpeg 库**，探测、解码、编码及
 PCM 校验均在进程内完成；运行时不启动 `ffmpeg` / `ffprobe`，也不需要安装它们。
 
-默认仍只输出 TrueHD；可选择 E-AC-3 或同时输出两种格式。
+CLI 默认仍只输出 TrueHD；可选择 E-AC-3、AC-3 或多种格式。
 TrueHD 支持 5.1、7.1，默认完整比较逐声道 PCM SHA-256 和精确采样数；
 不自动降混、重采样或降低有效精度。
 E-AC-3 是有损编码，目前支持 48 kHz 的 5.1(side) 和真实 7.1；
 校验完整解码、声道布局和精确的含延迟/补零长度，不声称 PCM 无损一致。
+
+| 源音轨 | TrueHD | E-AC-3 | AC-3 |
+|---|---|---|---|
+| DTS-HD MA 5.1(side)，48 kHz | 原有无损校验 | 384–1024 kb/s，默认 960 | 固定 640 kb/s |
+| DTS-HD MA 7.1，48 kHz | 原有无损校验 | 768–1536 kb/s，默认 1536 | 不支持 |
+| 普通 DTS 5.1(side)，48 kHz（profile 为 `DTS`） | 不支持 | 固定最高 1024 kb/s | 固定 640 kb/s |
+
+普通 DTS 不扩展到 7.1、HRA 或未知 profile，也不输出 TrueHD。普通 DTS 的
+E-AC-3 忽略 MA 码率选择，始终使用 1024 kb/s。新 AC-3 和普通 DTS 路径不重采样、
+不重映射；后环绕 `5.1` 不是 `5.1(side)`。MA 原有 TrueHD 的采样率与布局支持不变。
+两种有损输出均显示 `VALIDATED (LOSSY)`，不会将有损源或有损输出标为无损。
 
 DTS:X / DTS:X IMAX 仅解码兼容的 5.1 或 7.1 声道，保持原布局；
 不执行上混、对象渲染，也不保留对象元数据或生成 Atmos。
@@ -63,16 +74,16 @@ macOS 使用 `.tar.gz` 保留执行权限，Windows 使用 `.zip`，
 
 - 批量选择或拖入 `.dts`、`.dtshd`、`.mkv`，直接读取本地文件，不上传或复制整部 MKV。
 - MKV 展示音轨索引、语言、标题、格式、声道和时长；手动勾选一条或多条音轨。
-  非 DTS-HD MA 音轨也会显示，但不可转换；有损 DTS core / HRA 仍不在支持范围。
+  普通 DTS 5.1 可选择有损输出；HRA 和其他不支持音轨仍显示但不可转换。
   不兼容原因按界面语言显示，并随所选输出格式更新；仅 E-AC-3 不兼容时，
   可取消 E-AC-3、保留 TrueHD。存在不兼容的已选音轨时不能开始转换。
-- TrueHD 与 E-AC-3 可同时勾选；桌面端默认勾选两种，CLI 默认仍仅 TrueHD。
+- TrueHD、E-AC-3 与 AC-3 可组合勾选；桌面端默认仍勾选前两种，AC-3 默认关闭，CLI 默认仍仅 TrueHD。
   E-AC-3 的 5.1 / 7.1 码率可分别选择自动或预设值，混合队列按音轨布局使用对应设置；
-  自动为 5.1 **960 kb/s**、7.1 **1536 kb/s**。
-- 可选输出目录，留空时与源文件同目录；MKV 输出使用 `电影名.track-索引.thd/.eac3`
+  MA 自动为 5.1 **960 kb/s**、7.1 **1536 kb/s**；普通 DTS 固定 **1024 kb/s**。
+- 可选输出目录，留空时与源文件同目录；MKV 输出使用 `电影名.track-索引.thd/.eac3/.ac3`
   避免同一电影的不同音轨互相覆盖。覆盖已有文件需要显式勾选。
 - 并行队列默认同时处理 **2** 项任务，可选 **1–8**，选择 1 即为串行。
-  同一文件的多个音轨、TrueHD / E-AC-3 输出也可并行；每项输出独立校验与发布。
+  同一文件的多个音轨、不同格式输出也可并行；每项输出独立校验与发布。
   较高并行数会增加 CPU、内存和磁盘负载。提供每项结果、错误提示、取消，以及可记住的中英文切换。
   总进度条按已结束任务计数；每个文件分别显示转码、源 PCM 校验和输出校验阶段，
   以及已处理时长、阶段耗时和估计百分比。估计依据实际处理采样数与媒体时长；
@@ -82,7 +93,7 @@ macOS 使用 `.tar.gz` 保留执行权限，Windows 使用 `.zip`，
 - 仅生成独立音频文件，不封装回 MKV、不解码视频或字幕，也不解析 DTS:X 对象。
 
 下文的平台构建入口默认同时生成 CLI 和 UI，并打包到同一发布目录。
-如果已经构建好本机 **v3** FFmpeg 后端，也可直接打包：
+如果已经构建好本机 **v4** FFmpeg 后端，也可直接打包：
 
 ```bash
 # macOS 终端 / Windows MSYS2 UCRT64 或 CLANGARM64 终端
@@ -121,7 +132,7 @@ hdma2truehd probe --list-tracks movie.mkv
 hdma2truehd convert --stream 2 --format both movie.mkv
 ```
 
-`--stream` 仅用于单个输入；CLI 默认命名仍为 `movie.thd/.eac3`，
+`--stream` 仅用于单个输入；CLI 默认命名仍为 `movie.thd/.eac3/.ac3`，
 转换同一 MKV 的不同音轨时请使用不同输出目录或单格式 `-o`。
 未明确选择时，多轨容器会被拒绝，不会自动选取默认音轨。
 
@@ -130,7 +141,7 @@ hdma2truehd convert --stream 2 --format both movie.mkv
 - Go：CLI、桌面队列、路径安全、逐声道哈希和最终输出发布。
 - 桌面：Wails 与嵌入式 HTML/CSS/JavaScript；`internal/gui/` 独立于 webview，可无界面测试。
 - cgo/C 桥接：使用 `libavformat` 探测（含 MKV 音轨）与封装、
-  `libavcodec` 解码与 TrueHD / E-AC-3 编码。
+  `libavcodec` 解码与 TrueHD / E-AC-3 / AC-3 编码。
 - `libswresample`：只转换整数样本的平面/交错和容器表示；输入输出采样率、
   声道标签完全相同，关闭抖动，不执行重采样或降混，并检查所有有效位。
 - 进程内处理检查 context 取消，FFmpeg I/O 配置中断回调；
@@ -219,8 +230,8 @@ SHA-256 校验工具。FFmpeg 构建脚本只生成静态库，不编译命令�
 替换静态库后应使用 `go build -a` / `go test -a` 强制重新链接，避免 Go 缓存
 继续使用外部库的旧版本。
 
-**旧后端升级：** MKV 支持要求版本标记 `8.0.1-hdma2truehd-71-v3`。
-旧的 `v1` / `v2` 静态库不能复用来构建此版本；先将 `.backend/ffmpeg-8.0.1/`
+**旧后端升级：** AC-3 支持要求版本标记 `8.0.1-hdma2truehd-71-v4`。
+旧的 `v1` / `v2` / `v3` 静态库不能复用来构建此版本；先将 `.backend/ffmpeg-8.0.1/`
 重命名为一个尚未占用的备份目录，再执行不带 `--reuse-backend` / `-ReuseBackend`
 的完整平台构建。不要仅执行 `--binary-only`；程序会拒绝旧版本后端。
 
@@ -371,16 +382,20 @@ hdma2truehd convert --skip-verify -o "output.thd" "input.dts"
 hdma2truehd convert --format eac3 -o "output.eac3" "input.dts"
 hdma2truehd convert --format both "input.dts"
 hdma2truehd convert --format both --eac3-bitrate 1536 "input-7.1.dts"
+hdma2truehd convert --format ac3 "input-5.1.dts"
+hdma2truehd convert --format eac3,ac3 "ordinary-dts-5.1.dts"
 ```
 
-`--format` 支持 `truehd`（默认）、`eac3`、`both`。两种格式默认与输入同目录、同名，
-分别使用 `.thd` 和 `.eac3`；双格式不能使用 `-o`，可以用 `--output-dir`。
-两种输出独立验证与发布，不保证成对原子提交；一种失败不会删除另一种已成功输出。
+`--format` 支持 `truehd`（默认）、`eac3`、`ac3` 和逗号分隔组合；
+`both` 保留原含义 TrueHD + E-AC-3，`all` 表示三种格式。输出默认与输入同目录、同名，
+分别使用 `.thd`、`.eac3`、`.ac3`；多格式不能使用 `-o`，可以用 `--output-dir`。
+各输出独立验证与发布，不保证成组原子提交；一种失败不会删除另一种已成功输出。
 
 `--ffmpeg` 和 `--ffprobe` 参数已移除；无需指定外部程序。
 `doctor` 检查链接版本、编解码能力，并实际执行三种布局的 24 位 PCM 回环；
 它不能代替真实 MA 文件验收或硬件认证。
 另会执行 5.1(side)/7.1 的 E-AC-3 编码、完整解码及格式/长度自检。
+还会检查 AC-3 5.1(side) 的固定 640 kb/s 编码、完整解码及精确长度。
 
 TrueHD 默认校验会另外完整解码源文件和输出文件，因此需要额外处理时间，但内存有界。
 比较声道标签、整数 PCM 的所有有效位、每个声道的 SHA-256 和精确采样数。
@@ -391,7 +406,7 @@ TrueHD 默认校验会另外完整解码源文件和输出文件，因此需要�
 
 - 仅接受 48 kHz、`5.1(side)` 或 `7.1`，不自动重采样或改变声道布局。
   高采样率、后环绕 `5.1` 等输入仍可输出 TrueHD，但 E-AC-3 分支会明确拒绝。
-- 默认总码率：5.1 为 **960 kb/s**，7.1 为 **1536 kb/s**。
+- MA 默认总码率：5.1 为 **960 kb/s**，7.1 为 **1536 kb/s**；普通 DTS 5.1 固定 **1024 kb/s**。
   `--eac3-bitrate` 单位为 kb/s：5.1 允许 384–1024，7.1 允许 768–1536，
   都必须为 32 的倍数；`0` 表示按布局选默认值。
 - 7.1 使用独立 5.1 核心和四声道依赖子流，总码率按 **5:3** 分配。
@@ -406,6 +421,20 @@ TrueHD 默认校验会另外完整解码源文件和输出文件，因此需要�
   完整解码检查，并显示 `UNVERIFIED`，但仍检查输出格式。
 - 实验性 7.1 需要支持依赖子流的播放器；仅识别核心的设备可能只播放 5.1。
   软件测试不等于 Dolby、Blu-ray 或硬件认证，也不保证主观音质。
+
+#### AC-3 的有损编码边界
+
+- 仅支持 MA 或普通 DTS 的 48 kHz `5.1(side)`，固定 **640 kb/s**。
+  不接受 7.1，不自动降混、重采样或将后环绕改成侧环绕。
+- 与 E-AC-3 一样保留 256 采样编码延迟及 1536 采样帧补零，默认完整解码，
+  检查 codec、声道布局和精确长度；不比较有损 PCM 哈希，不宣称无损。
+- 普通 DTS 必须明确选择 `eac3`、`ac3` 或 `eac3,ac3`。默认 TrueHD 和
+  `both` 包含不兼容的 TrueHD 请求，会明确报错，不会静默跳过或回退。
+
+原生测试检查短流、帧边界、逐声道路由、精确 640 kb/s、损坏拒绝和取消。
+设置 `HDMA_TEST_DTS_51` 与 `HDMA_TEST_DECODER` 后，集成测试还从真实 MA 样本
+提取普通 DTS 核心（外部工具仅构造测试样本），验证裸流及 MKV 选轨输出的
+640/1024 kb/s；实际转换仍在进程内完成。Windows 原生运行和硬件播放需另行验收。
 
 每个任务在目标文件系统创建唯一临时目录，编码、元数据检查及默认 PCM 校验
 成功后才发布。默认不覆盖；无需覆盖时使用原子硬链接，因此目标文件系统必须
@@ -448,12 +477,12 @@ TrueHD 默认校验会另外完整解码源文件和输出文件，因此需要�
 
 | 项目 | 范围 |
 |---|---|
-| 输入 | 本地单音轨音频文件或明确选择的 MKV 音轨，库探测确认为 `dts` / `DTS-HD MA`、`DTS-HD MA + DTS:X` 或 `DTS-HD MA + DTS:X IMAX` |
+| 输入 | 本地单音轨文件或明确选择的 MKV 音轨；MA profile 及 DTS:X 兼容声道按原范围；普通 `DTS` 仅 48 kHz / 5.1(side) 有损输出 |
 | 布局 | `5.1(side)`、`5.1`（后环绕）、`7.1`（保留侧环绕和后环绕） |
 | 有效精度 | 16 或 24 位；未知、20 位、32 位输入明确拒绝 |
 | 采样率 | 44.1、48、88.2、96、176.4、192 kHz；不重采样 |
 | 输出 | 原始 TrueHD `.thd`，无 AC-3 伴随流 |
-| 可选有损输出 | E-AC-3 `.eac3`，仅 48 kHz / 5.1(side)、7.1；不生成 Atmos |
+| 可选有损输出 | E-AC-3 `.eac3`：48 kHz / 5.1(side)、7.1；AC-3 `.ac3`：48 kHz / 5.1(side)，640 kb/s；普通 DTS 仅 5.1(side)；不生成 Atmos |
 | 编解码回环 | 三种布局 × 六种采样率 × 两种位深 × 八种长度，共 288 组 |
 | 真实 MA 验收 | macOS 本地两份约 30 秒样本通过：48 kHz，5.1(side)/16 bit、7.1/24 bit；完整 PCM 校验及外部 FFmpeg 解码比较一致 |
 | 真实 DTS:X 验收 | macOS 本地约 30 秒的 48 kHz / 24 bit / 7.1 片段通过；逐声道 PCM 校验及外部 FFmpeg 解码比较一致；尚无 DTS:X 5.1 / IMAX 真实样本验收 |
@@ -465,7 +494,7 @@ Blu-ray 上限是八声道 96 kHz、六声道 192 kHz。
 需另行验证码率、各 presentation 及播放兼容性。
 
 不支持将 DTS 有损核心、DTS-HD HRA 冒充 MA，不自动猜测未知布局。
-不提供 MKV 输出/重新封装、DTS:X 对象元数据保留、Atmos 生成或批量并行。
+不提供 MKV 输出/重新封装、DTS:X 对象元数据保留或 Atmos 生成。
 
 ### 测试
 
@@ -511,7 +540,7 @@ Bash 为 `hdma2truehd`（Windows 下为 `.exe`），PowerShell 为 `hdma2truehd.
 如需测试仅编译主程序的结果，可显式指定 `--binary ./bin/hdma2truehd`
 或 `-Binary '.\bin\hdma2truehd.exe'`。
 扫描仓库 `samples/` 顶层的输入文件，扩展名不区分大小写，
-将同名 `.thd` / `.eac3` 写回该目录，不把已有输出当输入，也不修改源文件。
+将同名 `.thd` / `.eac3` / `.ac3` 写回该目录，不把已有输出当输入，也不修改源文件。
 默认仅输出 TrueHD；`--format` / `-Format` 可选择格式，
 `--eac3-bitrate` / `-Eac3Bitrate` 可指定总码率。
 始终保留相应格式的完整校验，不覆盖已有输出；任何转换失败均返回非零退出码。
@@ -592,18 +621,31 @@ bash dist/hdma2truehd-darwin-arm64/relink-ui/relink.sh
 ## English
 
 An experimental Go command-line and desktop tool that **converts DTS-HD MA audio, including
-DTS:X compatible channels, to Dolby TrueHD `.thd` or E-AC-3 `.eac3`** on macOS and Windows.
+DTS:X compatible channels, to Dolby TrueHD `.thd`, E-AC-3 `.eac3` or AC-3 `.ac3`**, with
+lossy output support for ordinary DTS 5.1, on macOS and Windows.
 It **statically links FFmpeg libraries through cgo**: probing, decoding,
 encoding and PCM verification all run in-process. No `ffmpeg` / `ffprobe`
 executable is launched or required at runtime.
 
-TrueHD remains the default; E-AC-3 or both formats can be selected.
+TrueHD remains the CLI default; E-AC-3, AC-3 or multiple formats can be selected.
 TrueHD supports 5.1 and 7.1, with complete per-channel PCM SHA-256 and exact sample-count
 comparison enabled by default. No automatic downmixing, resampling or reduction
 in effective precision is performed.
 E-AC-3 is lossy and currently supports 48 kHz 5.1(side) and genuine 7.1.
 Validation checks complete decoding, layout and exact length including delay
 and padding; it does not claim lossless PCM equality.
+
+| Source | TrueHD | E-AC-3 | AC-3 |
+|---|---|---|---|
+| DTS-HD MA 5.1(side), 48 kHz | Existing lossless verification | 384–1024 kb/s, default 960 | Fixed 640 kb/s |
+| DTS-HD MA 7.1, 48 kHz | Existing lossless verification | 768–1536 kb/s, default 1536 | Unsupported |
+| Ordinary DTS 5.1(side), 48 kHz (profile `DTS`) | Unsupported | Fixed maximum 1024 kb/s | Fixed 640 kb/s |
+
+Ordinary DTS does not include 7.1, HRA or unknown profiles, and cannot output
+TrueHD. Its E-AC-3 output ignores MA bitrate choices and always uses 1024 kb/s.
+The new paths never resample or remap: back-surround `5.1` is not `5.1(side)`.
+Existing MA TrueHD rate/layout support is unchanged. Both lossy outputs report
+`VALIDATED (LOSSY)`, never lossless verification of a lossy source or output.
 
 DTS:X / DTS:X IMAX decoding uses only the compatible 5.1 or 7.1 channels and
 preserves their layout. It does not upmix, render objects, retain object metadata
@@ -662,19 +704,21 @@ kits. The workflow currently does not sign code or notarize macOS applications.
   no upload or full-MKV copy is needed.
 - MKV inputs list container stream indices, languages, titles, formats, layouts
   and durations. Explicitly select one or more audio tracks. Unsupported tracks
-  remain visible but disabled; lossy DTS core / HRA remain unsupported.
+  remain visible; ordinary DTS 5.1 supports lossy outputs, while HRA and other
+  unsupported tracks remain disabled.
   Reasons use the interface language and update with selected output formats.
   If only E-AC-3 is incompatible, deselect it to retain TrueHD. Incompatible
   selected tracks block conversion until the selection or formats are changed.
-- Select TrueHD, E-AC-3 or both. The desktop defaults to both; the CLI still
+- Select any combination of TrueHD, E-AC-3 and AC-3. AC-3 is off by default;
+  the desktop still defaults to TrueHD plus E-AC-3 and the CLI still
   defaults to TrueHD only. E-AC-3 has separate automatic/preset bitrate choices
   for 5.1 and 7.1; mixed queues use each track's layout-specific setting.
   Automatic is **960 kb/s for 5.1**, **1536 kb/s for 7.1**.
 - Choose an output directory or leave it empty to use each source directory.
-  MKV outputs use `movie.track-INDEX.thd/.eac3` to distinguish selected tracks.
+  MKV outputs use `movie.track-INDEX.thd/.eac3/.ac3` to distinguish selected tracks.
   Existing outputs require explicit overwrite permission.
 - The queue defaults to **2** concurrent jobs, adjustable from **1–8**; choose
-  1 for serial operation. Tracks and TrueHD / E-AC-3 outputs from the same
+  1 for serial operation. Tracks and different output formats from the same
   file may run concurrently, each independently verified and published.
   Higher concurrency increases CPU, memory and disk load.
   Per-job results, errors and cancellation remain available. The queue
@@ -690,7 +734,7 @@ kits. The workflow currently does not sign code or notarize macOS applications.
   decoding or DTS:X object rendering is added.
 
 The platform build entry points below now build CLI and UI into one release by
-default. With an existing native **v3** FFmpeg backend, package them directly:
+default. With an existing native **v4** FFmpeg backend, package them directly:
 
 ```bash
 # macOS terminal / Windows MSYS2 UCRT64 or CLANGARM64 terminal
@@ -732,7 +776,7 @@ hdma2truehd probe --list-tracks movie.mkv
 hdma2truehd convert --stream 2 --format both movie.mkv
 ```
 
-`--stream` accepts one input only. CLI output naming remains `movie.thd/.eac3`;
+`--stream` accepts one input only. CLI output naming remains `movie.thd/.eac3/.ac3`;
 use separate output directories or single-format `-o` when converting multiple
 tracks from the same MKV. Multi-track containers without explicit selection
 are rejected, never silently mapped to a default track.
@@ -744,7 +788,7 @@ are rejected, never silently mapped to a default track.
 - Desktop: Wails with embedded HTML/CSS/JavaScript; `internal/gui/` is
   independent of the webview and can be tested headlessly.
 - cgo/C bridge: `libavformat` for probing (including MKV tracks) and muxing;
-  `libavcodec` for decoding and TrueHD / E-AC-3 encoding.
+  `libavcodec` for decoding and TrueHD / E-AC-3 / AC-3 encoding.
 - `libswresample`: converts only integer sample representations, including
   planar/interleaved storage and container width. Input/output sample rates and
   speaker labels remain identical; dithering is disabled. No resampling or
@@ -867,7 +911,7 @@ relinking rather than reusing a cached result linked against old external
 archives.
 
 **Upgrading an old backend:** This feature requires the marker
-`8.0.1-hdma2truehd-71-v3` for MKV support. Old `v1` / `v2` static libraries cannot be reused.
+`8.0.1-hdma2truehd-71-v4` for AC-3 support. Old `v1` / `v2` / `v3` static libraries cannot be reused.
 Rename `.backend/ffmpeg-8.0.1/` to an unused backup directory, then run a full
 platform build without `--reuse-backend` / `-ReuseBackend`. An executable-only
 build is insufficient; the program rejects the old backend.
@@ -1037,12 +1081,15 @@ hdma2truehd convert --skip-verify -o "output.thd" "input.dts"
 hdma2truehd convert --format eac3 -o "output.eac3" "input.dts"
 hdma2truehd convert --format both "input.dts"
 hdma2truehd convert --format both --eac3-bitrate 1536 "input-7.1.dts"
+hdma2truehd convert --format ac3 "input-5.1.dts"
+hdma2truehd convert --format eac3,ac3 "ordinary-dts-5.1.dts"
 ```
 
-`--format` accepts `truehd` (default), `eac3` or `both`. Outputs default to the
-input directory and basename with `.thd` / `.eac3` extensions.
-Dual-format conversion cannot use `-o`; use `--output-dir` instead.
-Outputs are verified and published independently, not atomically as a pair;
+`--format` accepts `truehd` (default), `eac3`, `ac3` and comma-separated combinations.
+`both` retains its existing TrueHD + E-AC-3 meaning; `all` selects all three. Outputs default to the
+input directory and basename with `.thd` / `.eac3` / `.ac3` extensions.
+Multi-format conversion cannot use `-o`; use `--output-dir` instead.
+Outputs are verified and published independently, not atomically as a group;
 one failure does not delete the other successfully published output.
 
 The `--ffmpeg` and `--ffprobe` options have been removed; no external executable
@@ -1050,6 +1097,7 @@ paths are needed. `doctor` checks the linked version and codec capabilities,
 then performs actual 24-bit PCM round trips for all three layouts. It does not
 replace real MA fixture testing or hardware certification.
 It also encodes and fully decodes E-AC-3 5.1(side)/7.1 to check format and length.
+AC-3 5.1(side) is also checked with fixed 640 kb/s encoding and exact decoded length.
 
 Default TrueHD verification additionally decodes the complete source and output, so it
 takes extra processing time but uses bounded memory. It compares speaker labels,
@@ -1063,7 +1111,8 @@ marks the result `UNVERIFIED`; it is not presented as proven lossless.
 - Only 48 kHz `5.1(side)` or `7.1` is accepted, without automatic resampling
   or layout changes. Higher sample rates and back-surround `5.1` can still be
   converted to TrueHD, but the E-AC-3 branch explicitly rejects them.
-- Default total bitrate: **960 kb/s for 5.1**, **1536 kb/s for 7.1**.
+- MA default total bitrate: **960 kb/s for 5.1**, **1536 kb/s for 7.1**.
+  Ordinary DTS 5.1 always uses **1024 kb/s**.
   `--eac3-bitrate` is in kb/s: 384–1024 for 5.1, 768–1536 for 7.1, in steps
   of 32. `0` selects the layout-specific default.
 - 7.1 uses an independent 5.1 core plus a four-channel dependent substream,
@@ -1082,6 +1131,24 @@ marks the result `UNVERIFIED`; it is not presented as proven lossless.
 - Experimental 7.1 requires a player that supports dependent substreams.
   Core-only devices may play just 5.1. Software tests do not provide Dolby,
   Blu-ray or hardware certification, or guarantee subjective audio quality.
+
+#### AC-3 lossy encoding boundaries
+
+- Accepts only MA or ordinary DTS at 48 kHz `5.1(side)`, fixed **640 kb/s**.
+  No 7.1, automatic downmixing, resampling or back-to-side surround remapping.
+- Like E-AC-3, raw AC-3 retains 256 samples of encoder delay and padding to
+  1536-sample frames. Full output decoding checks codec, layout and exact length;
+  lossy PCM hashes are not compared or described as lossless.
+- Ordinary DTS requires `eac3`, `ac3` or `eac3,ac3`. Default TrueHD and `both`
+  include an incompatible TrueHD request and report it, without silently
+  skipping that format or falling back to another.
+
+Native tests cover short inputs, frame boundaries, channel routing, exact
+640 kb/s, corruption rejection and cancellation. With `HDMA_TEST_DTS_51` and
+`HDMA_TEST_DECODER` set, integration tests also extract ordinary DTS core from
+a real MA fixture (external tools construct fixtures only), then check raw
+and selected MKV-track outputs at 640/1024 kb/s. Conversion stays in-process.
+Native Windows execution and hardware playback require separate validation.
 
 Each job uses a unique temporary directory on the destination filesystem.
 Publication happens only after encoding, metadata checks and, by default, full
@@ -1140,12 +1207,12 @@ Exit codes: `0` success, `1` processing or diagnostic-log failure,
 
 | Item | Scope |
 |---|---|
-| Input | Local single-audio-stream files or explicitly selected MKV audio tracks confirmed by the libraries as `dts` / `DTS-HD MA`, `DTS-HD MA + DTS:X` or `DTS-HD MA + DTS:X IMAX` |
+| Input | Local single-audio-stream files or explicitly selected MKV tracks; existing MA/X profiles, plus ordinary `DTS` at 48 kHz / 5.1(side) for lossy outputs only |
 | Layouts | `5.1(side)`, `5.1` (back surrounds), `7.1` (preserves both side and back surrounds) |
 | Effective precision | 16 or 24 bits; unknown, 20-bit and 32-bit inputs are explicitly rejected |
 | Sample rates | 44.1, 48, 88.2, 96, 176.4 and 192 kHz; no resampling |
 | Output | Raw TrueHD `.thd`, without an AC-3 companion stream |
-| Optional lossy output | E-AC-3 `.eac3`, 48 kHz / 5.1(side) or 7.1 only; no Atmos |
+| Optional lossy output | E-AC-3 `.eac3`: 48 kHz / 5.1(side) or 7.1; AC-3 `.ac3`: 48 kHz / 5.1(side), 640 kb/s; ordinary DTS limited to 5.1(side); no Atmos |
 | Codec round trips | Three layouts × six sample rates × two bit depths × eight lengths: 288 cases |
 | Real MA validation | Two local approximately 30-second samples passed on macOS: 48 kHz, 5.1(side)/16 bit and 7.1/24 bit; full PCM verification and external FFmpeg decoding matched |
 | Real DTS:X validation | A local approximately 30-second 48 kHz / 24 bit / 7.1 clip passed on macOS; per-channel PCM verification and external FFmpeg decoding matched; real DTS:X 5.1 / IMAX fixtures remain unverified |
@@ -1161,7 +1228,7 @@ and playback compatibility.
 
 Lossy DTS core or DTS-HD HRA cannot be accepted as MA, and unknown layouts are
 not guessed. MKV output/remuxing, DTS:X object metadata retention, Atmos generation
-and parallel batch processing are not provided.
+are not provided.
 
 ### Testing
 
@@ -1212,7 +1279,7 @@ build automatically. To test an executable-only build, explicitly pass
 `--binary ./bin/hdma2truehd` or `-Binary '.\bin\hdma2truehd.exe'`.
 
 The scripts scan only top-level inputs in `samples/`, matching extensions
-case-insensitively. They write same-basename `.thd` / `.eac3` outputs there,
+case-insensitively. They write same-basename `.thd` / `.eac3` / `.ac3` outputs there,
 never treat existing outputs as inputs, and do not modify sources.
 TrueHD-only remains the default; select formats with `--format` / `-Format`
 and total bitrate with `--eac3-bitrate` / `-Eac3Bitrate`.

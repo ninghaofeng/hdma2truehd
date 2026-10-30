@@ -38,8 +38,8 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --help|-h)
-            printf 'Usage: bash scripts/test-samples.sh [--binary PATH] [--overwrite] [--format truehd|eac3|both] [--eac3-bitrate KBPS]\n'
-            printf 'Convert samples/*.dts and samples/*.dtshd; TrueHD uses full PCM comparison, lossy E-AC-3 uses strict decode/format/length validation.\n'
+            printf 'Usage: bash scripts/test-samples.sh [--binary PATH] [--overwrite] [--format truehd|eac3|ac3|both|eac3,ac3] [--eac3-bitrate KBPS]\n'
+            printf 'Convert samples/*.dts and samples/*.dtshd; TrueHD uses full PCM comparison, AC-3/E-AC-3 use strict decode/format/length validation. Incompatible inputs are rejected, not downmixed.\n'
             printf 'Default: find one hdma2truehd executable in dist/ or its immediate release subdirectories (.exe on Windows).\n'
             printf 'If multiple releases exist, specify --binary PATH.\n'
             printf 'Existing outputs are preserved unless --overwrite is specified.\n'

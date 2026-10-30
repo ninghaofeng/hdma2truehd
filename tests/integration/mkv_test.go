@@ -64,7 +64,7 @@ func TestMKVSelectedTracks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, extension := range []string{".thd", ".eac3"} {
+	for _, extension := range []string{".thd", ".eac3", ".ac3"} {
 		output := filepath.Join(t.TempDir(), "output"+extension)
 		result, err := b.Convert(t.Context(), movie, output, audio.Options{StreamIndex: &index})
 		if err != nil {

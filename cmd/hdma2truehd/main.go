@@ -23,7 +23,7 @@ import (
 )
 
 const help = "hdma2truehd " + buildinfo.Version + "\n" + buildinfo.Copyright + `
-DTS-HD MA to TrueHD / E-AC-3 (experimental)
+DTS-HD MA / DTS to TrueHD / E-AC-3 / AC-3 (experimental)
 
 Usage:
   hdma2truehd doctor
@@ -32,12 +32,14 @@ Usage:
   hdma2truehd version
 
 Convert options (put flags before input paths):
-  -o PATH             Single-file .thd/.eac3 output (not with --format both)
+  -o PATH             Single-file .thd/.eac3/.ac3 output (one format only)
   --output-dir DIR    Batch output directory (must already exist)
-  --format FORMAT     truehd (default), eac3, or both
+  --format FORMAT     truehd (default), eac3, ac3, both, all, or comma-separated list
+                      both=truehd,eac3; all=truehd,eac3,ac3; e.g. eac3,ac3
   --jobs N            Parallel conversion jobs, 1..8 (default 2; 1 is serial)
   --stream N          Explicit container audio stream index (one input only)
-  --eac3-bitrate N    Total kb/s; default 960 for 5.1(side), 1536 for 7.1
+  --eac3-bitrate N    MA E-AC-3 total kb/s; default 960 for 5.1(side), 1536 for 7.1
+                      Requires E-AC-3 output; ordinary DTS always uses 1024
   --overwrite         Explicitly replace existing outputs after success
   --skip-verify       Skip full output verification; result is UNVERIFIED
 
@@ -45,8 +47,11 @@ Patched FFmpeg libraries are statically linked; no ffmpeg/ffprobe is needed.
 TrueHD preserves supported sample rates, precision and speaker labels.
 E-AC-3 is LOSSY: 48 kHz, 5.1(side)/7.1; no automatic resampling/downmixing.
 E-AC-3 7.1 uses independent+dependent substreams, not Atmos or a 5.1 fallback.
-Raw E-AC-3 retains 256 samples of encoder delay plus final frame padding.
-E-AC-3 validation checks complete decoding, format and length, not PCM equality.
+AC-3 is LOSSY: only 48 kHz 5.1(side), fixed 640 kb/s.
+Ordinary DTS (profile exactly DTS): only 48 kHz 5.1(side), E-AC-3 fixed 1024
+kb/s or AC-3 fixed 640 kb/s; no TrueHD, 7.1 or HRA support.
+Raw AC-3/E-AC-3 retains 256 samples of encoder delay plus padding to 1536-sample frames.
+Lossy validation checks complete decoding, format and length, not PCM equality.
 DTS:X/IMAX uses compatible 5.1/7.1 channels only, without object rendering or metadata.
 Use "probe --list-tracks INPUT.mkv" to list container audio tracks.
 No upmixing, downmixing, resampling, Atmos, or MKV output/remuxing.
@@ -125,7 +130,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if command == "convert" {
 		flags.StringVar(&output, "o", "", "single-file output")
 		flags.StringVar(&outputDir, "output-dir", "", "existing output directory")
-		flags.StringVar(&format, "format", "truehd", "truehd, eac3 or both")
+		flags.StringVar(&format, "format", "truehd", "truehd, eac3, ac3, both, all or comma-separated list")
 		flags.IntVar(&eac3Bitrate, "eac3-bitrate", 0, "total E-AC-3 kb/s; 0 selects a default")
 		flags.IntVar(&streamIndex, "stream", -1, "explicit audio stream index")
 		flags.IntVar(&concurrency, "jobs", batch.DefaultConcurrency, "parallel conversion jobs, 1..8")
@@ -166,7 +171,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 		info, err := backend.Probe(ctx, flags.Arg(0))
 		if err == nil {
-			err = info.ValidateSource()
+			err = info.ValidateInput()
 		}
 		if err != nil {
 			fmt.Fprintln(errOut, err)
@@ -188,8 +193,8 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 			fmt.Fprintln(errOut, err)
 			return 1
 		}
-		fmt.Fprintln(out, "PASS: backend version, TrueHD 5.1(side)/5.1/7.1 lossless PCM and E-AC-3 5.1(side)/7.1 decode/format/length self-tests.")
-		fmt.Fprintln(out, "Not a DTS-HD MA fixture test or hardware compatibility certification.")
+		fmt.Fprintln(out, "PASS: backend version, TrueHD 5.1(side)/5.1/7.1 lossless PCM, E-AC-3 5.1(side)/7.1 and AC-3 5.1(side) decode/format/length self-tests.")
+		fmt.Fprintln(out, "Not a DTS-HD MA/DTS fixture test or hardware compatibility certification.")
 		return 0
 	}
 	// Plan all output paths before writing, including collisions with later
@@ -202,9 +207,18 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "--stream requires a nonnegative index and exactly one input")
 		return 2
 	}
+	formats, err := outputFormats(format)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return 2
+	}
+	hasEAC3 := false
+	for _, selected := range formats {
+		hasEAC3 = hasEAC3 || selected == "eac3"
+	}
 	if (eac3Bitrate != 0 && (eac3Bitrate < 384 || eac3Bitrate > 1536 || eac3Bitrate%32 != 0)) ||
-		(format == "truehd" && eac3Bitrate != 0) {
-		fmt.Fprintln(errOut, "--eac3-bitrate requires eac3/both; use 0 for automatic or 384..1536 kb/s in steps of 32 (layout limits also apply)")
+		(!hasEAC3 && eac3Bitrate != 0) {
+		fmt.Fprintln(errOut, "--eac3-bitrate requires an E-AC-3 output; use 0 for automatic or 384..1536 kb/s in steps of 32 (layout limits also apply)")
 		return 2
 	}
 	jobs, err := planJobs(flags.Args(), output, outputDir, format)
@@ -230,8 +244,8 @@ func processJobs(ctx context.Context, jobs []job, options audio.Options, concurr
 	fmt.Fprintln(errOut, "NOTE: PCM verification covers decoded compatible channels only; DTS:X objects are not rendered and object metadata is not retained.")
 	fmt.Fprintln(errOut, "NOTE: Without a trusted original length/checksum, source completeness is unconfirmed. Suspected truncation produces warnings; confirmed decoding/verification errors block publication.")
 	for _, job := range jobs {
-		if strings.EqualFold(filepath.Ext(job.output), ".eac3") {
-			fmt.Fprintln(errOut, "NOTE: E-AC-3 is LOSSY; validation is strict decoding plus format/length checks, not lossless PCM equality. Raw output has 256 samples of delay and frame padding. Outputs are published independently.")
+		if lossyOutput(job.output) {
+			fmt.Fprintln(errOut, "NOTE: AC-3/E-AC-3 is LOSSY; validation is strict decoding plus format/length checks, not lossless PCM equality. Raw output has 256 samples of delay and padding to 1536-sample frames. Outputs are published independently.")
 			break
 		}
 	}
@@ -242,9 +256,12 @@ func processJobs(ctx context.Context, jobs []job, options audio.Options, concurr
 	err := batch.Run(ctx, len(jobs), concurrency, func(i int) {
 		job := jobs[i]
 		mu.Lock()
-		fmt.Fprintf(errOut, "[%d/%d] %s -> %s (encode%s)\n", i+1, len(jobs), job.input, job.output, verificationLabel(options.SkipVerify, strings.EqualFold(filepath.Ext(job.output), ".eac3")))
+		fmt.Fprintf(errOut, "[%d/%d] %s -> %s (encode%s)\n", i+1, len(jobs), job.input, job.output, verificationLabel(options.SkipVerify, lossyOutput(job.output)))
 		mu.Unlock()
 		jobOptions := options
+		if !strings.EqualFold(filepath.Ext(job.output), ".eac3") {
+			jobOptions.EAC3Bitrate = 0
+		}
 		jobOptions.Warning = func(problem diagnostic.Problem) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -325,19 +342,40 @@ func verificationLabel(skip, lossy bool) string {
 
 type job struct{ input, output string }
 
-func planJobs(inputs []string, output, outputDir, format string) ([]job, error) {
-	formats := []string{format}
+func lossyOutput(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".eac3" || ext == ".ac3"
+}
+
+func outputFormats(format string) ([]string, error) {
 	switch format {
-	case "truehd", "eac3":
 	case "both":
-		// Each format becomes an independent transaction. A successful TrueHD
-		// output is preserved even if the following E-AC-3 conversion fails.
-		formats = []string{"truehd", "eac3"}
-		if output != "" {
-			return nil, fmt.Errorf("-o cannot be combined with --format both; use --output-dir")
+		return []string{"truehd", "eac3"}, nil
+	case "all":
+		return []string{"truehd", "eac3", "ac3"}, nil
+	}
+	formats := strings.Split(format, ",")
+	seen := map[string]bool{}
+	for i, selected := range formats {
+		selected = strings.TrimSpace(selected)
+		if selected == "thd" {
+			selected = "truehd"
 		}
-	default:
-		return nil, fmt.Errorf("--format must be truehd, eac3 or both")
+		if (selected != "truehd" && selected != "eac3" && selected != "ac3") || seen[selected] {
+			return nil, fmt.Errorf("--format requires truehd, eac3, ac3, both, all or a list of distinct formats")
+		}
+		seen[selected], formats[i] = true, selected
+	}
+	return formats, nil
+}
+
+func planJobs(inputs []string, output, outputDir, format string) ([]job, error) {
+	formats, err := outputFormats(format)
+	if err != nil {
+		return nil, err
+	}
+	if len(formats) > 1 && output != "" {
+		return nil, fmt.Errorf("-o requires one output format; use --output-dir")
 	}
 	if len(inputs) == 0 {
 		return nil, fmt.Errorf("convert requires at least one input; put options before input paths")
@@ -362,8 +400,8 @@ func planJobs(inputs []string, output, outputDir, format string) ([]job, error) 
 		}
 		for _, selected := range formats {
 			extension := ".thd"
-			if selected == "eac3" {
-				extension = ".eac3"
+			if selected != "truehd" {
+				extension = "." + selected
 			}
 			destination := output
 			if destination == "" {

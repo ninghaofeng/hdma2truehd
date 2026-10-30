@@ -3,7 +3,6 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$Binary,
     [switch]$Overwrite,
-    [ValidateSet('truehd', 'eac3', 'both')]
     [string]$Format = 'truehd',
     [int]$Eac3Bitrate = 0
 )
@@ -58,7 +57,7 @@ if ($inputs.Count -eq 0) {
 
 $convertArgs = @('convert', '--format', $Format.ToLowerInvariant(), '--output-dir', $samples)
 # Verification is intentionally not configurable here; every sample must pass
-# full PCM comparison (TrueHD) or lossy decode/format/length validation (E-AC-3).
+# full PCM comparison (TrueHD) or lossy decode/format/length validation.
 if ($Eac3Bitrate -ne 0) {
     $convertArgs += @('--eac3-bitrate', $Eac3Bitrate.ToString())
 }

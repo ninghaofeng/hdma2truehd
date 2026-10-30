@@ -52,6 +52,9 @@ int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
 typedef struct HDMAEAC3 HDMAEAC3;
 int hdma_eac3_open(const char *path, int channels, int bitrate,
                    uintptr_t handle, HDMAEAC3 **result, char *error);
+/* AC-3 uses the same PCM/write/finish lifecycle, fixed at 640 kb/s and 5.1. */
+int hdma_ac3_open(const char *path, int channels, uintptr_t handle,
+                  HDMAEAC3 **result, char *error);
 int hdma_eac3_write(HDMAEAC3 *op, const unsigned char *pcm, int size, char *error);
 int hdma_eac3_finish(HDMAEAC3 *op, uint64_t *samples, uint64_t *decoded, char *error);
 void hdma_eac3_close(HDMAEAC3 *op);

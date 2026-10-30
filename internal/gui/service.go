@@ -23,14 +23,18 @@ type Backend interface {
 	Convert(context.Context, string, string, audio.Options) (audio.Result, error)
 }
 
-// Problem rules out all conversion; EAC3Problem only rules out the lossy path.
-// Keep both visible rather than hiding tracks or silently changing formats.
+// Problem rules out all conversion; format-specific failures remain visible
+// without silently changing the requested outputs.
 type Track struct {
 	audio.Track
-	Problem         string `json:"problem"`
-	EAC3Problem     string `json:"eac3Problem"`
-	ProblemCode     string `json:"problemCode"`
-	EAC3ProblemCode string `json:"eac3ProblemCode"`
+	Problem           string `json:"problem"`
+	TrueHDProblem     string `json:"truehdProblem"`
+	EAC3Problem       string `json:"eac3Problem"`
+	AC3Problem        string `json:"ac3Problem"`
+	ProblemCode       string `json:"problemCode"`
+	TrueHDProblemCode string `json:"truehdProblemCode"`
+	EAC3ProblemCode   string `json:"eac3ProblemCode"`
+	AC3ProblemCode    string `json:"ac3ProblemCode"`
 }
 
 type Input struct {
@@ -51,6 +55,7 @@ type Request struct {
 	Tracks      []Selection `json:"tracks"`
 	TrueHD      bool        `json:"truehd"`
 	EAC3        bool        `json:"eac3"`
+	AC3         bool        `json:"ac3"`
 	Bitrate51   int         `json:"bitrate51"`
 	Bitrate71   int         `json:"bitrate71"`
 	OutputDir   string      `json:"outputDir"`
@@ -173,19 +178,20 @@ func (s *Service) Inspect(ctx context.Context, paths []string) ([]Input, error) 
 		} else {
 			for _, track := range tracks {
 				t := Track{Track: track}
-				if err := track.Info.ValidateSource(); err != nil {
-					t.Problem = err.Error()
-					var unsupported *audio.UnsupportedError
-					if errors.As(err, &unsupported) {
-						t.ProblemCode = unsupported.Code
+				setProblem := func(err error, text, code *string) {
+					if err == nil {
+						return
 					}
-				} else if err := track.Info.ValidateEAC3(0); err != nil {
-					t.EAC3Problem = err.Error()
+					*text = err.Error()
 					var unsupported *audio.UnsupportedError
 					if errors.As(err, &unsupported) {
-						t.EAC3ProblemCode = unsupported.Code
+						*code = unsupported.Code
 					}
 				}
+				setProblem(track.Info.ValidateInput(), &t.Problem, &t.ProblemCode)
+				setProblem(track.Info.ValidateOutput("thd", 0), &t.TrueHDProblem, &t.TrueHDProblemCode)
+				setProblem(track.Info.ValidateOutput("eac3", 0), &t.EAC3Problem, &t.EAC3ProblemCode)
+				setProblem(track.Info.ValidateOutput("ac3", 0), &t.AC3Problem, &t.AC3ProblemCode)
 				input.Tracks = append(input.Tracks, t)
 			}
 		}
@@ -216,7 +222,7 @@ func pathKey(path string) (string, error) {
 }
 
 func (s *Service) plan(ctx context.Context, req Request) ([]Job, error) {
-	if len(req.Tracks) == 0 || (!req.TrueHD && !req.EAC3) {
+	if len(req.Tracks) == 0 || (!req.TrueHD && !req.EAC3 && !req.AC3) {
 		return nil, fmt.Errorf("select audio tracks and at least one output format")
 	}
 	if !req.EAC3 && (req.Bitrate51 != 0 || req.Bitrate71 != 0) {
@@ -257,17 +263,12 @@ func (s *Service) plan(ctx context.Context, req Request) ([]Job, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := info.ValidateSource(); err != nil {
-			return nil, err
-		}
 		bitrate := req.Bitrate51
 		if info.Stream.Layout == "7.1" {
 			bitrate = req.Bitrate71
 		}
-		if req.EAC3 {
-			if err := info.ValidateEAC3(bitrate); err != nil {
-				return nil, fmt.Errorf("%s track %d: %w", selected.Path, selected.Index, err)
-			}
+		if info.Stream.Profile == "DTS" {
+			bitrate = 1024
 		}
 		dir := req.OutputDir
 		if dir == "" {
@@ -279,9 +280,16 @@ func (s *Service) plan(ctx context.Context, req Request) ([]Job, error) {
 		if strings.EqualFold(filepath.Ext(info.Path), ".mkv") {
 			base += fmt.Sprintf(".track-%d", selected.Index)
 		}
-		for _, format := range []string{"thd", "eac3"} {
-			if (format == "thd" && !req.TrueHD) || (format == "eac3" && !req.EAC3) {
+		for _, format := range []string{"thd", "eac3", "ac3"} {
+			if (format == "thd" && !req.TrueHD) || (format == "eac3" && !req.EAC3) || (format == "ac3" && !req.AC3) {
 				continue
+			}
+			kbps := 0
+			if format == "eac3" {
+				kbps = bitrate
+			}
+			if err := info.ValidateOutput(format, kbps); err != nil {
+				return nil, fmt.Errorf("%s track %d (%s): %w", selected.Path, selected.Index, format, err)
 			}
 			target, err := filepath.Abs(filepath.Join(dir, base+"."+format))
 			if err != nil {
@@ -421,7 +429,7 @@ func (s *Service) RetryFailed(ctx context.Context) (State, error) {
 		}
 		req := s.request
 		req.Tracks = []Selection{{Path: job.Input, Index: job.Index}}
-		req.TrueHD, req.EAC3 = job.Format == "thd", job.Format == "eac3"
+		req.TrueHD, req.EAC3, req.AC3 = job.Format == "thd", job.Format == "eac3", job.Format == "ac3"
 		if !req.EAC3 {
 			req.Bitrate51, req.Bitrate71 = 0, 0
 		}

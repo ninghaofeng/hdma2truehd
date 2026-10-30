@@ -1,4 +1,4 @@
-# Experimental TrueHD / E-AC-3 backend
+# Experimental TrueHD / E-AC-3 / AC-3 backend
 
 Base: [FFmpeg 8.0.1](https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz).
 
@@ -22,8 +22,10 @@ presentation uses both substreams. No new 5.1 downmix presentation is generated
 for 7.1, and no Dolby Digital companion/core stream is generated.
 
 The Go tool checks the linked library's build marker
-`8.0.1-hdma2truehd-71-v3`. Version 3 additionally enables the Matroska demuxer
-for explicitly selected MKV audio tracks, without enabling video decoding.
+`8.0.1-hdma2truehd-71-v4`. Version 3 enabled the Matroska demuxer for explicitly
+selected MKV audio tracks, without enabling video decoding. Version 4 also
+enables stock AC-3 encoding/decoding and raw AC-3 muxing/demuxing. Rebuild older
+static libraries; adding AC-3 does not require another upstream codec patch.
 This marker is a version check, not cryptographic
 provenance or a substitute for testing. `doctor` performs actual in-process
 24-bit PCM round trips for each supported layout.
@@ -54,6 +56,20 @@ Synthetic channel-specific tones check routing and SNR separately.
 `doctor` also checks both E-AC-3 layouts. Playback and Blu-ray compliance remain
 unverified; a core-only player may expose only 5.1.
 
+## AC-3 and ordinary DTS
+
+AC-3 uses the same bounded PCM FIFO and strict length accounting as E-AC-3,
+but only one stock independent encoder at 48 kHz, 5.1(side), fixed 640 kb/s.
+It retains the same 256-sample delay and 1536-sample framing. Verification
+checks complete output decoding and exact padded length, never PCM equality.
+`doctor` includes this AC-3 path.
+
+Ordinary DTS (profile `DTS`) is allowed only at 48 kHz 5.1(side), to AC-3 or
+E-AC-3. E-AC-3 uses the maximum supported 1024 kb/s independently of MA
+bitrate controls. It is not accepted for TrueHD, nor does this enable HRA,
+unknown profiles or ordinary DTS 7.1. The native decoder separately checks
+the expected core profile; MA operations still reject fallback to lossy core.
+
 ## Verification boundaries
 
 The integration suite tests three layouts, six sample rates, two bit depths,
@@ -73,7 +89,7 @@ interoperability require further validation.
 
 The build is intentionally minimal, disables command-line programs, shared
 libraries, network support and third-party codecs. It includes the native
-DTS decoder, TrueHD and E-AC-3 encoders/decoders, PCM decoders and required containers.
+DTS decoder, TrueHD, E-AC-3 and AC-3 encoders/decoders, PCM decoders and required containers.
 The cgo bridge statically links libavformat, libavcodec, libavutil and
 libswresample. Sample conversion uses identical rates and layouts, disables
 dithering, and rejects precision loss.

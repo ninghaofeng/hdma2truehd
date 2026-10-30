@@ -14,10 +14,10 @@ const translations = {
     parallelNotice: "默认同时处理 2 项任务，可选 1–8；1 为串行。同一文件的音轨和输出格式也可并行，较高并行数会增加 CPU、内存与磁盘负载。",
     bitrate51: "E-AC-3 5.1 码率", auto51: "自动：960 kb/s",
     bitrate71: "E-AC-3 7.1 总码率", auto71: "自动：1536 kb/s",
-    limits: "E-AC-3：仅支持 48 kHz 的 5.1(side) / 7.1。5.1 码率范围 384–1024，7.1 为 768–1536 kb/s。混合队列按音轨布局分别使用对应设置。",
+    limits: "DTS-HD MA → E-AC-3：仅 48 kHz 5.1(side) / 7.1；码率分别为 384–1024 / 768–1536 kb/s。普通 DTS（profile 必须为 DTS）：仅 48 kHz 5.1(side)，E-AC-3 固定 1024 kb/s，忽略码率选择，不支持 TrueHD。AC-3：仅 48 kHz 5.1(side)，固定 640 kb/s。不自动重映射或重采样；不支持 HRA。",
     output: "输出目录", browse: "选择目录", reset: "重置", sameDir: "与每个源文件相同的目录",
     overwrite: "允许覆盖已有输出（默认不覆盖）",
-    notice: "DTS:X 仅转换兼容声道，不渲染对象。TrueHD 校验完整 PCM；E-AC-3 校验完整解码与长度，并保留 256 采样编码延迟和帧补零。两种输出独立发布，不封装回 MKV。",
+    notice: "DTS:X 仅转换兼容声道，不渲染对象。TrueHD 校验完整 PCM；AC-3 / E-AC-3 校验完整解码与长度，保留 256 采样编码延迟及补齐至 1536 采样帧的补零。各格式独立发布，不封装回 MKV。",
     queue: "转换队列", start: "开始转换", cancel: "取消转换", cancelling: "正在取消…",
     busy: "正在读取音轨信息…", idle: "就绪", working: "正在处理；下方显示当前文件的编码与校验进度。",
     probe: "读取音轨信息", encode: "转码", check_output: "检查输出格式", verify_source: "校验：解码源音轨 PCM",
@@ -25,7 +25,7 @@ const translations = {
     estimated: "估计", unknownDuration: "总时长未知", incompatible: "所选输出格式不兼容，请调整格式或取消选择标记的音轨。",
     verified: "无损验证通过", validated: "有损校验通过", pending: "等待中", running: "编码 / 校验中",
     failed: "失败", cancelled: "已取消", selected: "已选音轨", total: "任务", complete: "已结束",
-    track: "音轨", default: "默认", unsupported: "不可转换", eac3Unavailable: "无法输出 E-AC-3",
+    track: "音轨", default: "默认", unsupported: "不可转换", eac3Unavailable: "无法输出 E-AC-3", available: "可用", unavailableFormat: "不可用",
     samples: "源采样 / 声道", decoded: "解码采样（含延迟和补零）", choose: "请选择音轨和输出格式。",
     unavailable: "桌面运行时未就绪，请通过桌面应用打开此界面。", busyError: "转换或读取音轨时不能添加文件。",
     selectionDisabled: "转换过程中不能修改音轨选择。"
@@ -43,10 +43,10 @@ const translations = {
     parallelNotice: "Default: 2 concurrent jobs, adjustable from 1–8; 1 is serial. Tracks and formats from the same file may run concurrently. Higher concurrency increases CPU, memory and disk load.",
     bitrate51: "E-AC-3 5.1 bitrate", auto51: "Automatic: 960 kb/s",
     bitrate71: "E-AC-3 7.1 total bitrate", auto71: "Automatic: 1536 kb/s",
-    limits: "E-AC-3: 48 kHz 5.1(side) / 7.1 only. 5.1: 384–1024; 7.1: 768–1536 kb/s. Mixed queues use each track's layout-specific setting.",
+    limits: "DTS-HD MA → E-AC-3: 48 kHz 5.1(side) / 7.1 only, 384–1024 / 768–1536 kb/s respectively. Ordinary DTS (profile exactly DTS): 48 kHz 5.1(side) only, E-AC-3 fixed 1024 kb/s regardless of bitrate selection; no TrueHD. AC-3: 48 kHz 5.1(side) only, fixed 640 kb/s. No remapping/resampling or HRA support.",
     output: "Output directory", browse: "Browse", reset: "Reset", sameDir: "Same directory as each source file",
     overwrite: "Allow replacing existing outputs (off by default)",
-    notice: "DTS:X compatible channels only, no object rendering. TrueHD verifies complete PCM; E-AC-3 validates full decoding and length, retaining 256 samples of delay and frame padding. Outputs are published independently, not remuxed into MKV.",
+    notice: "DTS:X compatible channels only, no object rendering. TrueHD verifies complete PCM; AC-3 / E-AC-3 validates full decoding and length, retaining 256 samples of delay and padding to 1536-sample frames. Outputs are published independently, not remuxed into MKV.",
     queue: "Conversion queue", start: "Start conversion", cancel: "Cancel", cancelling: "Cancelling…",
     busy: "Reading audio tracks…", idle: "Ready", working: "Processing; current-file encoding and verification progress appears below.",
     probe: "Reading audio track", encode: "Encoding", check_output: "Checking output format", verify_source: "Verification: decoding source PCM",
@@ -54,7 +54,7 @@ const translations = {
     estimated: "estimated", unknownDuration: "total duration unknown", incompatible: "Selected output formats are incompatible. Change formats or deselect marked tracks.",
     verified: "Lossless verified", validated: "Lossy validated", pending: "Pending", running: "Encoding / validating",
     failed: "Failed", cancelled: "Cancelled", selected: "selected tracks", total: "jobs", complete: "finished",
-    track: "Track", default: "default", unsupported: "Cannot convert", eac3Unavailable: "E-AC-3 unavailable",
+    track: "Track", default: "default", unsupported: "Cannot convert", eac3Unavailable: "E-AC-3 unavailable", available: "available", unavailableFormat: "unavailable",
     samples: "source samples/channel", decoded: "decoded samples (with delay/padding)", choose: "Select tracks and at least one output format.",
     unavailable: "Desktop runtime unavailable. Open this interface using the desktop application.", busyError: "Cannot add files while inspecting or converting.",
     selectionDisabled: "Track selection is locked during conversion."
@@ -164,37 +164,52 @@ function appendProblem(parent, error, warning = false) {
   }
 }
 
-// Compatibility follows the currently requested formats. A general source
-// failure blocks both; E-AC-3-only failure must not block TrueHD on its own.
-function trackProblem(track) {
+const outputFormats = [["truehd", "TrueHD"], ["eac3", "E-AC-3"], ["ac3", "AC-3"]];
+
+function formatProblem(track, format) {
+  const field = format === "truehd" ? "truehdProblem" : `${format}Problem`;
+  return {reason: track.problem || track[field], code: track.problemCode || track[`${field}Code`]};
+}
+
+function describeTrackProblem(track, reason, kind) {
+  if (!reason) return "";
   const info = track.info;
   const stream = info.stream;
-  const code = track.problemCode;
-  const eac3 = $("eac3").checked && track.eac3Problem;
-  const reason = track.problem || (eac3 ? track.eac3Problem : "");
-  if (!reason) return "";
-  const kind = code || (eac3 ? track.eac3ProblemCode : "");
   const actual = `${[stream.codec_name, stream.profile].filter(Boolean).join(" / ") || "?"} · ${stream.channel_layout || `${stream.channels} ch`} · ${info.sample_rate || "?"} Hz · ${info.effective_bits || "?"} bit`;
   return `${reasonMessages()[kind] || reason} (${actual})`;
 }
 
+// Never silently change format defaults when an ordinary DTS track is added.
+function trackProblem(track) {
+  return outputFormats.filter(([format]) => $(format).checked).map(([format, label]) => {
+    const {reason, code} = formatProblem(track, format);
+    return reason ? `${label}: ${describeTrackProblem(track, reason, code)}` : "";
+  }).filter(Boolean).join(" · ") || describeTrackProblem(track, track.problem, track.problemCode);
+}
+
 function reasonMessages() {
   return language === "zh" ? {
-    codec: "仅支持 DTS-HD MA 无损源音轨；当前编码不支持转换。",
-    profile: "当前为 DTS 有损核心、HRA 或未确认的 profile，不是已确认的 DTS-HD MA。",
+    codec: "仅支持 DTS-HD MA 或符合限制的普通 DTS；当前编码不支持转换。",
+    profile: "仅接受已确认的 DTS-HD MA 或普通 DTS；不支持 HRA 或未知 profile。",
     layout: "仅支持 5.1(side)、5.1（后环绕）和标准 7.1；不自动重映射或降混。",
     channels: "声道数量与布局信息不一致，无法安全转换。",
     rate: "采样率不支持；支持 44.1/48/88.2/96/176.4/192 kHz，不自动重采样。",
     bits: "有效位深未知或不支持；仅接受确认的 16/24 位音轨。",
-    eac3_format: "当前音轨可转 TrueHD，但 E-AC-3 仅支持 48 kHz 的 5.1(side)/7.1；请取消 E-AC-3 输出。"
+    eac3_format: "E-AC-3 需要 48 kHz 5.1(side)；仅 DTS-HD MA 另支持 7.1。",
+    truehd_source: "TrueHD 仅支持 DTS-HD MA；普通 DTS 请选择 E-AC-3 或 AC-3。",
+    ac3_format: "AC-3 仅支持 48 kHz 5.1(side)，固定 640 kb/s，不重映射或重采样。",
+    dts_format: "普通 DTS 仅支持 48 kHz 5.1(side)，输出 E-AC-3 或 AC-3。"
   } : {
-    codec: "Only lossless DTS-HD MA sources are supported; this codec cannot be converted.",
-    profile: "DTS core, HRA or an unconfirmed profile is not confirmed lossless DTS-HD MA.",
+    codec: "Only DTS-HD MA or eligible ordinary DTS sources are supported.",
+    profile: "Only confirmed DTS-HD MA or ordinary DTS profiles are supported; no HRA or unknown profiles.",
     layout: "Only 5.1(side), rear 5.1 and standard 7.1 are supported; no automatic remapping/downmix.",
     channels: "Channel count and speaker layout disagree; conversion is unsafe.",
     rate: "Unsupported rate; use 44.1/48/88.2/96/176.4/192 kHz. No automatic resampling.",
     bits: "Unknown or unsupported effective precision; confirmed 16/24-bit sources only.",
-    eac3_format: "TrueHD is available, but E-AC-3 requires 48 kHz 5.1(side)/7.1. Deselect E-AC-3."
+    eac3_format: "E-AC-3 requires 48 kHz 5.1(side); only DTS-HD MA also supports 7.1.",
+    truehd_source: "TrueHD requires DTS-HD MA. For ordinary DTS, select E-AC-3 or AC-3.",
+    ac3_format: "AC-3 requires 48 kHz 5.1(side), fixed 640 kb/s; no remapping or resampling.",
+    dts_format: "Ordinary DTS requires 48 kHz 5.1(side) and E-AC-3 or AC-3 output."
   };
 }
 
@@ -236,6 +251,11 @@ function renderInputs() {
       details.append(node("div", [track.language, stream.channel_layout || `${stream.channels} ch`,
         info.sample_rate ? `${info.sample_rate} Hz` : "", info.effective_bits ? `${info.effective_bits} bit` : "",
         duration, track.default ? t("default") : ""].filter(Boolean).join(" · "), "track-meta"));
+      for (const [format, name] of outputFormats) {
+        const {reason, code} = formatProblem(track, format);
+        const fixed = format === "ac3" ? " · 640 kb/s" : format === "eac3" && stream.profile === "DTS" ? " · 1024 kb/s" : "";
+        details.append(node("div", `${name}: ${reason ? `${t("unavailableFormat")} — ${describeTrackProblem(track, reason, code)}` : t("available") + fixed}`, reason ? "format-reason" : "track-meta"));
+      }
       if (problem) details.append(node("p", `${t("unsupported")}: ${problem}`, "problem"));
       label.append(checkbox, details);
       file.append(label);
@@ -248,10 +268,10 @@ function renderInputs() {
 
 function renderState() {
   const locked = busy || state.running;
-  for (const id of ["add", "clear", "truehd", "eac3", "concurrency", "browse", "reset-output", "overwrite"]) $(id).disabled = locked;
+  for (const id of ["add", "clear", "truehd", "eac3", "ac3", "concurrency", "browse", "reset-output", "overwrite"]) $(id).disabled = locked;
   $("drop").setAttribute("aria-disabled", String(locked));
   for (const id of ["bitrate51", "bitrate71"]) $(id).disabled = locked || !$("eac3").checked;
-  $("start").disabled = locked || !backend || selected.size === 0 || incompatibleSelection() || (!$("truehd").checked && !$("eac3").checked);
+  $("start").disabled = locked || !backend || selected.size === 0 || incompatibleSelection() || !outputFormats.some(([format]) => $(format).checked);
   $("cancel").disabled = !state.running || cancelling;
   $("cancel").textContent = t(cancelling ? "cancelling" : "cancel");
   $("retry-failed").disabled = locked || !backend || !state.jobs.some(job => job.status === "failed");
@@ -274,6 +294,7 @@ function renderState() {
     const heading = node("div", undefined, "job-heading");
     heading.append(node("span", filename(job.output)), node("span", t(job.status), `status ${job.status}`));
     item.append(heading, node("div", job.output, "file-path"));
+    if (job.format === "ac3" || job.bitrate) item.append(node("div", `${job.format === "ac3" ? "AC-3" : "E-AC-3"} · ${job.format === "ac3" ? 640 : job.bitrate} kb/s`, "track-meta"));
     const p = job.progress;
     if (p?.stage) {
       const terminal = !["pending", "running"].includes(job.status);
@@ -341,7 +362,7 @@ $("drop").addEventListener("keydown", (event) => {
 });
 $("language").addEventListener("change", () => { language = $("language").value; localStorage.setItem("hdma-language", language); applyLanguage(); });
 $("clear").addEventListener("click", () => { inputs = []; selected.clear(); clearError(); renderInputs(); renderState(); });
-for (const id of ["truehd", "eac3"]) $(id).addEventListener("change", () => { renderInputs(); renderState(); });
+for (const [id] of outputFormats) $(id).addEventListener("change", () => { renderInputs(); renderState(); });
 $("reset-output").addEventListener("click", () => { $("output").value = ""; });
 $("browse").addEventListener("click", async () => {
   if (!backend) return;
@@ -351,7 +372,7 @@ $("browse").addEventListener("click", async () => {
 $("start").addEventListener("click", async () => {
   clearError();
   const tracks = [...selected].map((id) => { const [path, index] = JSON.parse(id); return {path, index}; });
-  if (tracks.length === 0 || (!$("truehd").checked && !$("eac3").checked)) { showError(t("choose")); return; }
+  if (tracks.length === 0 || !outputFormats.some(([format]) => $(format).checked)) { showError(t("choose")); return; }
   if (incompatibleSelection()) { showError(t("incompatible")); return; }
   busy = true;
   renderInputs();
@@ -359,7 +380,7 @@ $("start").addEventListener("click", async () => {
   try {
     // Keep zero as "automatic" and send kb/s, not bits/s. The backend resolves
     // and validates each track's layout-specific rate during queue preflight.
-    acceptState(await backend.Start({tracks, truehd: $("truehd").checked, eac3: $("eac3").checked,
+    acceptState(await backend.Start({tracks, truehd: $("truehd").checked, eac3: $("eac3").checked, ac3: $("ac3").checked,
       bitrate51: $("eac3").checked ? Number($("bitrate51").value) : 0,
       bitrate71: $("eac3").checked ? Number($("bitrate71").value) : 0,
       concurrency: Number($("concurrency").value),

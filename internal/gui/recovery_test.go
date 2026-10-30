@@ -73,6 +73,56 @@ func TestRetryFailedPreservesSuccess(t *testing.T) {
 	}
 }
 
+func TestRetryAC3Only(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "source.dts")
+	if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	base := fakeBackend{}
+	var mu sync.Mutex
+	calls := map[string]int{}
+	s := New(fakeBackend{
+		probe: func(path string, index int) (audio.Info, error) {
+			info, err := base.ProbeStream(t.Context(), path, index)
+			info.Stream.Layout, info.Stream.Channels = "5.1(side)", 6
+			return info, err
+		},
+		convert: func(ctx context.Context, input, output string, options audio.Options) (audio.Result, error) {
+			mu.Lock()
+			calls[output]++
+			count := calls[output]
+			mu.Unlock()
+			want := 0
+			if strings.HasSuffix(output, ".eac3") {
+				want = 960
+			}
+			if options.EAC3Bitrate != want {
+				t.Errorf("%s: bitrate %d, want %d", output, options.EAC3Bitrate, want)
+			}
+			if strings.HasSuffix(output, ".ac3") && count == 1 {
+				return audio.Result{}, errors.New("deliberate AC-3 failure")
+			}
+			return base.Convert(ctx, input, output, options)
+		},
+	}, nil)
+	if _, err := s.Start(t.Context(), Request{Tracks: []Selection{{path, 0}}, TrueHD: true, EAC3: true, AC3: true, Bitrate51: 960}); err != nil {
+		t.Fatal(err)
+	}
+	before := waitQueue(t, s)
+	if len(before.Jobs) != 3 || before.Jobs[0].Status != "verified" || before.Jobs[1].Status != "validated" || before.Jobs[2].Status != "failed" {
+		t.Fatalf("%+v", before)
+	}
+	if _, err := s.RetryFailed(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	after := waitQueue(t, s)
+	if after.Jobs[2].Status != "validated" || after.Jobs[2].Bitrate != 0 ||
+		calls[after.Jobs[0].Output] != 1 || calls[after.Jobs[1].Output] != 1 || calls[after.Jobs[2].Output] != 2 {
+		t.Fatalf("retry changed formats or successful outputs: %+v calls=%v", after, calls)
+	}
+}
+
 func TestRetryProtectsAllOriginalInputs(t *testing.T) {
 	dir := t.TempDir()
 	a, b := filepath.Join(dir, "a.dts"), filepath.Join(dir, "b.dts")

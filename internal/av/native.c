@@ -32,6 +32,7 @@ typedef struct Operation {
     enum AVSampleFormat input_format;
     int rate;
     int bits;
+    int core_dts;
     int stream_index;
     int64_t pts;
     int64_t samples;
@@ -58,8 +59,11 @@ int hdma_check(void)
              avcodec_find_encoder(AV_CODEC_ID_TRUEHD) &&
              avcodec_find_decoder(AV_CODEC_ID_EAC3) &&
              avcodec_find_encoder(AV_CODEC_ID_EAC3) &&
+             avcodec_find_decoder(AV_CODEC_ID_AC3) &&
+             avcodec_find_encoder(AV_CODEC_ID_AC3) &&
              av_guess_format("truehd", NULL, NULL) &&
              av_guess_format("eac3", NULL, NULL) &&
+             av_guess_format("ac3", NULL, NULL) &&
              av_find_input_format("matroska"));
 }
 
@@ -374,12 +378,14 @@ static int consume_frame(Operation *op, AVFrame *frame)
     if (frame->flags & AV_FRAME_FLAG_CORRUPT || frame->decode_error_flags ||
         frame->sample_rate != op->rate || av_channel_layout_compare(&frame->ch_layout, &op->layout))
         return AVERROR_INVALIDDATA;
-    if (op->decoder->codec_id == AV_CODEC_ID_DTS &&
-        op->decoder->profile != AV_PROFILE_DTS_HD_MA &&
-        op->decoder->profile != AV_PROFILE_DTS_HD_MA_X &&
-        op->decoder->profile != AV_PROFILE_DTS_HD_MA_X_IMAX) {
-        op->stage = "validate lossless DTS-HD MA / DTS:X decoder profile";
-        return AVERROR_INVALIDDATA;
+    if (op->decoder->codec_id == AV_CODEC_ID_DTS) {
+        int ma = op->decoder->profile == AV_PROFILE_DTS_HD_MA ||
+                 op->decoder->profile == AV_PROFILE_DTS_HD_MA_X ||
+                 op->decoder->profile == AV_PROFILE_DTS_HD_MA_X_IMAX;
+        if (op->core_dts ? op->decoder->profile != AV_PROFILE_DTS : !ma) {
+            op->stage = "validate selected DTS / DTS-HD MA decoder profile";
+            return AVERROR_INVALIDDATA;
+        }
     }
     if (!op->swr) {
         /* swresample only normalizes sample representation. Equal input/output
@@ -486,6 +492,12 @@ int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
 {
     uintptr_t previous = hdma_log_enter(handle);
     Operation op = {.handle = handle};
+    /* Explicit full-width decode-only core path. MA processing must still
+     * reject a decoder falling back to core; TrueHD never accepts core input. */
+    op.core_dts = !output && expected->bits == 32 &&
+        !strcmp(expected->codec, "dts") && !strcmp(expected->profile, "DTS") &&
+        expected->rate == 48000 && expected->channels == 6 &&
+        !strcmp(expected->layout, "5.1(side)");
     AVPacket *packet = NULL;
     int ret = open_input(&op, path, expected->index);
     if (ret < 0 || (ret = open_decoder(&op, expected)) < 0)

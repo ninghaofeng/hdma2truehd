@@ -133,20 +133,20 @@ func (b Backend) convert(ctx context.Context, input, output string, options Opti
 	if err != nil {
 		return Result{}, err
 	}
-	if err := source.ValidateSource(); err != nil {
-		return Result{}, err
-	}
 	output, err = filepath.Abs(output)
 	if err != nil {
 		return Result{}, err
 	}
 	extension := strings.ToLower(filepath.Ext(output))
-	lossy := extension == ".eac3"
+	lossy := extension == ".eac3" || extension == ".ac3"
 	if extension != ".thd" && !lossy {
-		return Result{}, fmt.Errorf("output must use the .thd or .eac3 extension")
+		return Result{}, fmt.Errorf("output must use the .thd, .eac3 or .ac3 extension")
+	}
+	if err := source.ValidateOutput(strings.TrimPrefix(extension, "."), options.EAC3Bitrate); err != nil {
+		return Result{}, err
 	}
 	bitrate := 0
-	if lossy {
+	if extension == ".eac3" {
 		bitrate, err = eac3Bitrate(source, options.EAC3Bitrate)
 		if err != nil {
 			return Result{}, err
@@ -187,7 +187,9 @@ func (b Backend) convert(ctx context.Context, input, output string, options Opti
 	temp := filepath.Join(tempDir, "output"+extension)
 	stageContext := progress.stage(ctx, "encode")
 	var stats av.EAC3Stats
-	if lossy {
+	if extension == ".ac3" {
+		stats, err = av.EncodeAC3(stageContext, source.Path, temp, nativeInfo(source))
+	} else if lossy {
 		stats, err = av.EncodeEAC3(stageContext, source.Path, temp, nativeInfo(source), bitrate)
 	} else {
 		err = b.Encode(stageContext, source, temp)
@@ -206,7 +208,7 @@ func (b Backend) convert(ctx context.Context, input, output string, options Opti
 		return Result{}, err
 	}
 	if lossy {
-		err = matchingEAC3(source, encoded)
+		err = matchingLossy(source, encoded, strings.TrimPrefix(extension, "."))
 	} else {
 		err = matchingOutput(source, encoded)
 	}
@@ -217,7 +219,7 @@ func (b Backend) convert(ctx context.Context, input, output string, options Opti
 	if lossy && !options.SkipVerify {
 		// Retain the same publication gate, but never label lossy format/length
 		// validation as proof of the source/output PCM equality used below.
-		if err := validateEAC3(progress.stage(ctx, "verify_output"), encoded, stats); err != nil {
+		if err := validateLossy(progress.stage(ctx, "verify_output"), encoded, stats); err != nil {
 			return Result{}, err
 		}
 		progress.finish()

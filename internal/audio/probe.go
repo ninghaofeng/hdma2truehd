@@ -142,11 +142,55 @@ func (b Backend) ProbeStream(ctx context.Context, path string, index int) (resul
 
 // ValidateEAC3 lets UI preflight reuse the exact conversion policy.
 func (i Info) ValidateEAC3(kbps int) error {
-	if err := i.ValidateSource(); err != nil {
+	if err := i.ValidateInput(); err != nil {
 		return err
 	}
 	_, err := eac3Bitrate(i, kbps)
 	return err
+}
+
+func (i Info) ordinaryDTS() bool {
+	return i.Stream.Codec == "dts" && i.Stream.Profile == "DTS"
+}
+
+// ValidateInput recognizes the union of supported sources. Output-specific
+// checks must still run: ordinary DTS is never eligible for TrueHD.
+func (i Info) ValidateInput() error {
+	if !i.ordinaryDTS() {
+		return i.ValidateSource()
+	}
+	if i.Rate != 48000 || i.Stream.Channels != 6 || i.Stream.Layout != "5.1(side)" {
+		return &UnsupportedError{Code: "dts_format", Message: "ordinary DTS supports 48000 Hz 5.1(side) only; no resampling/remapping"}
+	}
+	return nil
+}
+
+func (i Info) ValidateAC3() error {
+	if err := i.ValidateInput(); err != nil {
+		return err
+	}
+	if i.Rate != 48000 || i.Stream.Channels != 6 || i.Stream.Layout != "5.1(side)" {
+		return &UnsupportedError{Code: "ac3_format", Message: "AC-3 supports 48000 Hz 5.1(side) only, at 640 kb/s; no resampling/remapping"}
+	}
+	return nil
+}
+
+// ValidateOutput is shared by conversion and preflight; selecting several
+// formats requires each one to pass, without silently dropping an output.
+func (i Info) ValidateOutput(format string, kbps int) error {
+	switch format {
+	case "truehd", "thd":
+		if i.ordinaryDTS() {
+			return &UnsupportedError{Code: "truehd_source", Message: "ordinary DTS is lossy and cannot be converted to TrueHD; choose E-AC-3 or AC-3"}
+		}
+		return i.ValidateSource()
+	case "eac3":
+		return i.ValidateEAC3(kbps)
+	case "ac3":
+		return i.ValidateAC3()
+	default:
+		return fmt.Errorf("unsupported output format %q", format)
+	}
 }
 
 func (i Info) ValidateSource() error {
