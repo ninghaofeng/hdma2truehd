@@ -175,19 +175,23 @@ restart header、声道顺序和极短输入 flush。库版本在运行时检查
    预检查、并行任务执行及退出码。单项失败不影响其他任务；取消停止领取新任务，
    并等待已启动任务清理。
 2. [`internal/audio/convert.go`](internal/audio/convert.go)：转换事务主线，
-   即“探测并验证输入 → 同文件系统临时编码 → 输出格式检查 → 完整 PCM 比较
-   → 发布”。未显式允许覆盖时，用硬链接创建最终名称，避免检查后的竞争覆盖。
+   即“探测并验证输入 → 同文件系统临时编码 → 输出格式检查 → 按格式完整验证
+   → 发布”。TrueHD 比较完整 PCM；AC-3/E-AC-3 严格检查解码、格式和采样长度，
+   不宣称 PCM 相等。未显式允许覆盖时，用硬链接创建最终名称，避免检查后的竞争覆盖。
 3. [`internal/audio/probe.go`](internal/audio/probe.go) 与
    [`internal/audio/pcm.go`](internal/audio/pcm.go)：格式白名单和精度约束；
    将交错、低位补零的 32 位整数 PCM 按声道分别哈希，并检查精确采样数。
+   MKV 的语言和有符号延迟元数据仅用于自动命名，不调整音频时间轴或采样值。
 4. [`internal/av/native.go`](internal/av/native.go) 与
    [`internal/av/native.c`](internal/av/native.c)：同步 cgo 句柄、取消和错误回传，
    以及原生解码、整数表示转换、FIFO 分帧、编码与尾部 flush。
    DTS:X 在此仅解码兼容声道，不接入对象或高度渲染器。
+   MKV 的头部解析与后续流探测分别隔离非目标轨道；不支持的音频内容编码保留在
+   清单中并单独标记，而不是让无关字幕或视频的编码方式阻断转换。
 5. [`scripts/build-common.sh`](scripts/build-common.sh)、
    [`scripts/build-release.sh`](scripts/build-release.sh) 与
    [`tools/link-wrapper/main.go`](tools/link-wrapper/main.go)：跨平台构建、安全清理、
-   静态依赖检查及重新链接输入捕获；FFmpeg 编码补丁见
+   静态依赖检查及重新链接输入捕获；FFmpeg 编码与轨道隔离补丁见
    [`patches/ffmpeg/README.md`](patches/ffmpeg/README.md)。
 6. [`tests/integration/`](tests/integration/)：原生 TrueHD 合成信号回环及可选真实
    DTS 样本测试。合成回环验证编码器，不代替真实 DTS 解码或硬件播放验收。
@@ -203,6 +207,7 @@ restart header、声道顺序和极短输入 flush。库版本在运行时检查
    [`internal/diagnostic/log.go`](internal/diagnostic/log.go) 与
    [`internal/av/logging.c`](internal/av/logging.c)：稳定错误码、上下文日志归属、
    本地日志轮转与原生警告捕获。前端按错误码翻译概要，保留原始技术详情。
+   日志文件保持 JSONL；查看器仅将其呈现为按等级着色的纯文本，不改写存储内容。
    [`internal/audio/retry.go`](internal/audio/retry.go) 协调重试预算：
    独立探测可重试一次，转换内部探测不另行重试，临时 I/O 才可重做完整事务。
 
@@ -852,23 +857,31 @@ ownership and failure boundaries:
    and waits for active jobs to clean up.
 2. [`internal/audio/convert.go`](internal/audio/convert.go): the conversion
    transaction: probe/validate input, encode to a temporary file on the same
-   filesystem, check output metadata, compare complete PCM, then publish.
+   filesystem, check output metadata, perform format-appropriate verification,
+   then publish. TrueHD compares complete PCM; AC-3/E-AC-3 strictly validate
+   decoding, format and sample length without claiming PCM equality.
    Without explicit overwrite permission, a hard link creates the final name
    without a check-then-overwrite race.
 3. [`internal/audio/probe.go`](internal/audio/probe.go) and
    [`internal/audio/pcm.go`](internal/audio/pcm.go): supported formats and
    precision constraints; per-channel hashing of interleaved, left-aligned
    32-bit integer PCM with zero low padding bits, plus exact sample counts.
+   MKV language and signed delay metadata affect automatic naming only, not
+   the audio timeline or sample values.
 4. [`internal/av/native.go`](internal/av/native.go) and
    [`internal/av/native.c`](internal/av/native.c): synchronous cgo handles,
    cancellation/error propagation, native decoding, integer representation
    conversion, FIFO reblocking, encoding and final flushing.
    DTS:X uses compatible channels only, without an object or height renderer.
+   MKV header parsing and subsequent stream probing isolate non-target tracks
+   separately. Unsupported audio content encodings remain individually marked
+   in the inventory; unrelated subtitle/video encodings do not block conversion.
 5. [`scripts/build-common.sh`](scripts/build-common.sh),
    [`scripts/build-release.sh`](scripts/build-release.sh) and
    [`tools/link-wrapper/main.go`](tools/link-wrapper/main.go): cross-platform
    builds, safe cleanup, static dependency checks and relink-input capture.
-   See [`patches/ffmpeg/README.md`](patches/ffmpeg/README.md) for the encoder patch.
+   See [`patches/ffmpeg/README.md`](patches/ffmpeg/README.md) for the encoder and
+   track-isolation patches.
 6. [`tests/integration/`](tests/integration/): native TrueHD synthetic-signal
    round trips and optional real DTS fixture tests. Synthetic round trips test
    the encoder; they do not replace real DTS decoding or hardware playback tests.
@@ -887,6 +900,8 @@ ownership and failure boundaries:
    [`internal/av/logging.c`](internal/av/logging.c): stable error codes, scoped
    log attribution, local log rotation and native warning capture. The frontend
    localizes summaries by code while retaining original technical details.
+   Files remain JSONL; the viewer presents severity-colored plain text without
+   rewriting the stored records.
    [`internal/audio/retry.go`](internal/audio/retry.go) coordinates retry budgets:
    standalone probes may retry once; probes inside conversion do not retry
    independently, and only temporary I/O permits a fresh full transaction.

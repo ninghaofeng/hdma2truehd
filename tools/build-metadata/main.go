@@ -38,6 +38,8 @@ func generate(directory string) error {
 	if err != nil {
 		return err
 	}
+	// Version/copyright share one source, but each resource format still needs
+	// its own escaping; Go string quoting below is not valid XML escaping.
 	t, err := template.New("plist").Funcs(template.FuncMap{"xml": func(value string) (string, error) {
 		var escaped bytes.Buffer
 		err := xml.EscapeText(&escaped, []byte(value))

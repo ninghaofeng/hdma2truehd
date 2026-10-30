@@ -11,6 +11,8 @@
 
 extern int hdmaGoCancelled(uintptr_t handle);
 
+/* This encoder owns output framing only. native.c owns strict source decoding;
+ * Go connects them with synchronous PCM callbacks and owns final publication. */
 struct HDMAEAC3 {
     uintptr_t handle;
     /* Slot 0 is the only encoder for AC-3/E-AC-3 5.1. Only E-AC-3 7.1 adds

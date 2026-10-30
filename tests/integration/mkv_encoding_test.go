@@ -67,6 +67,9 @@ func TestMKVContentEncodings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// These are header-policy fixtures, not zlib/encryption implementations.
+	// Packet bytes stay unchanged: excluded tracks must never be decoded, and
+	// unsupported selected tracks must fail before their payload is inspected.
 	compression := func(algo byte) []byte {
 		return mkvEncodingElement([]byte{0x62, 0x40},
 			mkvEncodingElement([]byte{0x50, 0x34}, mkvEncodingElement([]byte{0x42, 0x54}, []byte{algo})))

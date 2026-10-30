@@ -95,6 +95,9 @@ func (b Backend) Digest(ctx context.Context, info Info) (PCM, error) {
 	return w.finish()
 }
 
+// ComparePCM compares complete, ordered channel fingerprints and lengths.
+// Rate, layout and precision eligibility must already have been checked: the
+// fingerprints identify sample values, not the format used to interpret them.
 func ComparePCM(source, output PCM) error {
 	if source.Samples != output.Samples {
 		return fmt.Errorf("PCM sample count mismatch: source=%d output=%d", source.Samples, output.Samples)

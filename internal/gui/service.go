@@ -434,6 +434,8 @@ func (s *Service) RetryFailed(ctx context.Context) (State, error) {
 		if err != nil {
 			return State{}, diagnostic.Wrap("preflight", err)
 		}
+		// Reprobing can change language/delay naming metadata. A retry must
+		// not silently redirect the original job to a different output path.
 		if len(planned) != 1 || planned[0].Output != job.Output {
 			return State{}, fmt.Errorf("retry output plan changed")
 		}
@@ -495,6 +497,8 @@ func (s *Service) run(ctx context.Context, req Request, done chan struct{}) {
 			s.state.Running = false
 		})
 	}()
+	// Queue membership/order stays fixed while running. Workers own stable
+	// index slots; only their contents change through locked updates.
 	err := batch.Run(ctx, len(s.State().Jobs), req.Concurrency, func(i int) {
 		// Manual retry keeps terminal jobs in this same list. Only pending
 		// entries may execute; successful outputs must never be encoded again.
@@ -561,6 +565,8 @@ func (s *Service) run(ctx context.Context, req Request, done chan struct{}) {
 	}
 }
 
+// Cancel requests cancellation; it does not wait for encoder/staging cleanup.
+// Running becomes false only after active jobs return and terminal state is set.
 func (s *Service) Cancel() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

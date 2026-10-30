@@ -30,6 +30,8 @@ type Failure struct {
 func (e *Failure) Error() string { return e.Cause.Error() }
 func (e *Failure) Unwrap() error { return e.Cause }
 
+// Wrap adds the caller's stage without replacing the underlying typed cause.
+// Describe can still prioritize explicit policy codes over stage fallbacks.
 func Wrap(stage string, err error) error {
 	if err == nil {
 		return nil

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <libavutil/error.h>
 
+/* Keep this policy failure distinct from generic FFmpeg ENOSYS failures. */
 #define HDMA_ERROR_CONTENT_ENCODING FFERRTAG('H', 'D', 'C', 'E')
 
 /* Shared metadata contract: bits is reported effective precision; explicit
@@ -19,8 +20,11 @@ typedef struct HDMAInfo {
     char codec[64];
     char profile[64];
     char layout[128];
+    /* Naming metadata only: delay is signed milliseconds from timeline zero,
+     * with zero used when no start timestamp is available. */
     char language[64];
     int64_t delay_ms;
+    /* Inventory can retain this track without probing/decompressing packets. */
     int content_encoding_unsupported;
 } HDMAInfo;
 
@@ -56,7 +60,9 @@ int hdma_process(const char *path, const char *output, const HDMAInfo *expected,
  * write accepts interleaved, left-aligned little-endian int32 PCM at 48 kHz.
  * bitrate is total bits/second; keep handle live until close, even on failure.
  * finish returns source and padded decoded samples per channel; close is still
- * required after finish succeeds. Neither operation publishes the final path. */
+ * required after finish succeeds. Neither operation publishes the final path.
+ * Calls on one instance are serialized; after failure or finish, only close
+ * is supported. A retry must allocate a fresh encoder and staging file. */
 typedef struct HDMAEAC3 HDMAEAC3;
 int hdma_eac3_open(const char *path, int channels, int bitrate,
                    uintptr_t handle, HDMAEAC3 **result, char *error);

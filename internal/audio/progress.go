@@ -20,6 +20,8 @@ type Progress struct {
 	Done     bool    `json:"done"`
 }
 
+// A reporter belongs to one conversion attempt. Synchronous native callbacks
+// update it on the calling goroutine, so stage timing needs no shared mutex.
 type reporter struct {
 	report  func(Progress)
 	started time.Time

@@ -237,6 +237,8 @@ function clock(seconds) {
 }
 
 function renderInputs() {
+  // Rows are rebuilt for selection, format and language changes. Preserve open
+  // explanations by stable file/stream keys, not by transient DOM positions.
   const expanded = new Set([...$("inputs").querySelectorAll(".track-issues[open]")].map(details => details.dataset.track));
   const fragment = document.createDocumentFragment();
   for (const input of inputs) {
@@ -270,6 +272,8 @@ function renderInputs() {
         duration, track.default ? t("default") : ""].filter(Boolean).join(" · "), "track-meta"));
       details.append(summary);
       label.append(checkbox, details);
+      // Format explanations stay outside the checkbox label: opening details
+      // must not also select or deselect an audio track.
       const formats = node("div", undefined, "track-formats");
       const reasons = new Map();
       for (const [format, name] of outputFormats) {
@@ -349,6 +353,8 @@ function renderState() {
   $("jobs").replaceChildren(fragment);
 }
 
+// Keep the raw JSONL view cached for language changes and format only its DOM
+// presentation. node uses textContent, including for multiline/untrusted logs.
 function renderLogs() {
   if (!logView) return;
   $("log-path").textContent = logView.path;
@@ -377,6 +383,7 @@ function renderLogs() {
       continue;
     }
     const level = event.level.trim().toLowerCase();
+    // Unknown levels remain readable labels, never arbitrary CSS class names.
     const severity = level === "warn" ? "warning" : ["info", "warning", "error", "debug", "trace"].includes(level) ? level : "other";
     const heading = [timeFormat.format(time), `[${levels[severity] || event.level.toUpperCase() || t("logRecord")}]`,
       event.stage ? `[${t(event.stage) || event.stage}]` : "", event.code ? `[${event.code}]` : ""].filter(Boolean).join(" ");

@@ -266,6 +266,8 @@ func processJobs(ctx context.Context, jobs []job, options audio.Options, concurr
 		mu.Lock()
 		fmt.Fprintf(errOut, "[%d/%d] %s -> %s (encode%s)\n", i+1, len(jobs), job.input, job.output, verificationLabel(options.SkipVerify, lossyOutput(job.output)))
 		mu.Unlock()
+		// Workers share the batch settings, not mutable per-job callbacks or
+		// format-specific bitrate choices. Derive those from a private copy.
 		jobOptions := options
 		if !strings.EqualFold(filepath.Ext(job.output), ".eac3") {
 			jobOptions.EAC3Bitrate = 0
@@ -379,6 +381,8 @@ func outputFormats(format string) ([]string, error) {
 	return formats, nil
 }
 
+// planJobs uses probes only for automatic MKV names; explicit -o bypasses that
+// naming step. Neither path bypasses Convert's fresh eligibility checks.
 func planJobs(inputs []string, output, outputDir, format string, probe func(string) (audio.Info, error)) ([]job, error) {
 	formats, err := outputFormats(format)
 	if err != nil {

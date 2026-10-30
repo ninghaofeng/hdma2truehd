@@ -24,6 +24,8 @@ func (b Backend) Check(ctx context.Context) error {
 	return av.Check(ctx)
 }
 
+// nativeInfo forwards processing constraints, not display/naming metadata.
+// The native operation reopens the input and enforces its container scope again.
 func nativeInfo(info Info) av.Info {
 	return av.Info{Index: info.Stream.Index, Rate: info.Rate, Bits: info.Bits,
 		Channels: info.Stream.Channels, Layout: info.Stream.Layout, Codec: info.Stream.Codec, Profile: info.Stream.Profile}

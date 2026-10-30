@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+// Event is the stored machine record. Codes/stages support localization;
+// Message retains technical text rather than becoming a translated UI string.
 type Event struct {
 	Time        time.Time `json:"time"`
 	Level       string    `json:"level"`
@@ -171,6 +173,8 @@ func (r *Recorder) Record(event Event) {
 	if event.Time.IsZero() {
 		event.Time = time.Now().UTC()
 	}
+	// Marshal escapes embedded message newlines. Rotate between whole records,
+	// so each appended physical line still represents one complete event.
 	data, err := json.Marshal(event)
 	if err == nil && r.size+int64(len(data)+1) > r.limit {
 		err = r.file.Close()
@@ -217,6 +221,8 @@ func (r *Recorder) Close() error {
 	return r.err
 }
 
+// View carries the raw bounded tail; human-readable formatting belongs to the
+// frontend and must not rewrite persisted JSONL or hide a recorder problem.
 type View struct {
 	Path      string   `json:"path"`
 	Content   string   `json:"content"`
@@ -227,6 +233,7 @@ type View struct {
 // Read returns a bounded text tail, not necessarily complete JSONL records.
 // A sticky write error remains visible in Problem even if old text is readable.
 func (r *Recorder) Read() (View, error) {
+	// Keep our writes/rotation excluded until the tail offset and read agree.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	view := View{Path: r.path}

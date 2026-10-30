@@ -109,6 +109,8 @@ func link() error {
 	if compiler == "" {
 		compiler = "cc"
 	}
+	// Only the saved replay uses relocated inputs. The live build must receive
+	// the original argument list, with no shell expansion or replay rewriting.
 	cmd := exec.Command(compiler, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()

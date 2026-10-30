@@ -44,6 +44,8 @@ func (a *App) Inspect(paths []string) ([]gui.Input, error) {
 
 // failure is the RPC error boundary: log the original cause, then preserve its
 // code/detail as JSON through Wails' string-only rejection channel.
+// This is a transport envelope, not displayed JSON: the frontend decodes it
+// into a localized summary and separate, unmodified technical detail.
 func (a *App) failure(stage string, err error) error {
 	if err == nil {
 		return nil
@@ -123,6 +125,8 @@ func main() {
 		AssetServer:      &assetserver.Options{Assets: assets},
 		DragAndDrop:      &options.DragAndDrop{EnableFileDrop: true, DisableWebViewDrop: true},
 		OnStartup: func(ctx context.Context) {
+			// Jobs outlive the Start RPC. Their context belongs to the desktop
+			// lifecycle; shutdown cancels it and waits for service cleanup.
 			app.ctx, app.stop = context.WithCancel(ctx)
 			if recorder != nil {
 				app.ctx = diagnostic.WithSink(app.ctx, recorder.Record)

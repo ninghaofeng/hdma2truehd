@@ -32,6 +32,7 @@ type Options struct {
 // Result describes a published output. Verified means lossless PCM equality;
 // Validated means a lossy output passed complete decoding and format/length
 // checks, not equality. Samples is source length; unverified results leave zero.
+// Always inspect the returned error too: cleanup can fail after publication.
 type Result struct {
 	Input          string
 	Output         string
@@ -218,6 +219,8 @@ func (b Backend) convert(ctx context.Context, input, output string, options Opti
 	if err != nil {
 		return Result{}, err
 	}
+	// Both verification modes start only after the output's codec and geometry
+	// match. SkipVerify bypasses decoding below, never the metadata gate above.
 	result = Result{Input: source.Path, Output: output, Lossy: lossy}
 	if lossy && !options.SkipVerify {
 		// Retain the same publication gate, but never label lossy format/length

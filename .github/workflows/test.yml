@@ -36,6 +36,8 @@ jobs:
   test:
     needs: metadata
     strategy:
+      # Collect every native platform result; one failure must not cancel the
+      # remaining compatibility evidence. Release creation still requires all.
       fail-fast: false
       matrix:
         include:

@@ -112,6 +112,8 @@ func encodeDolby(ctx context.Context, path, output string, expected Info, bitrat
 	if err := Process(ctx, path, "", expected, eac3Writer{encoder, status}); err != nil {
 		return EAC3Stats{}, err
 	}
+	// Process's final progress event ends source decoding, not lossy encoding:
+	// the delayed tail and frame padding are still owned by finish below.
 	if err := ctx.Err(); err != nil {
 		return EAC3Stats{}, err
 	}

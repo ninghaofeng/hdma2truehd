@@ -48,6 +48,8 @@ func Run(ctx context.Context, count, concurrency int, work func(int)) error {
 				index := next
 				next++
 				mu.Unlock()
+				// Cancellation can race with this already-completed claim.
+				// Active work must observe ctx itself; Run still waits for it.
 				work(index)
 			}
 		}()

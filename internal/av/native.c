@@ -117,6 +117,9 @@ static int open_container(Operation *op, const char *path, int index, int invent
     AVDictionary *options = NULL;
     av_dict_set(&options, "protocol_whitelist", "file", 0);
     av_dict_set(&options, "err_detect", "explode", 0);
+    /* The Matroska patch applies scope while reading headers, before discard
+     * flags exist. The later stream-info patch handles packet probing; neither
+     * phase alone isolates both content encodings and codec diagnostics. */
     av_dict_set(&options, "hdma_audio_only", "1", 0);
     av_dict_set_int(&options, "hdma_audio_stream", inventory ? -1 : index, 0);
     ret = avformat_open_input(&op->input, path, NULL, &options);
@@ -147,6 +150,8 @@ static int open_container(Operation *op, const char *path, int index, int invent
         active += stream->discard != AVDISCARD_ALL;
     }
     op->stage = "read stream information";
+    /* All audio may have unsupported content encodings. Preserve those
+     * inventory entries without asking FFmpeg to probe an empty active set. */
     if (active && (ret = avformat_find_stream_info(op->input, NULL)) < 0)
         return ret;
     return cancelled(op) ? AVERROR_EXIT : 0;
@@ -158,6 +163,8 @@ static int open_input(Operation *op, const char *path, int index)
     if (ret < 0)
         return ret;
     op->stage = "validate selected audio stream";
+    /* Report the header policy failure before checking metadata that was
+     * deliberately left unprobed for this unsupported track. */
     if (av_dict_get(op->input->streams[op->stream_index]->metadata,
                     "hdma_unsupported_content_encoding", NULL, 0)) {
         op->stage = "unsupported Matroska audio content encoding (compression/encryption or encoding chain)";

@@ -30,17 +30,22 @@ type Stream struct {
 // the conversion contract. Bits is reported effective precision, not internal
 // PCM storage width; ordinary DTS does not require MA's 16/24-bit invariant.
 type Info struct {
-	Path                       string `json:"path"`
-	Stream                     Stream `json:"stream"`
-	Rate                       int    `json:"sample_rate"`
-	Bits                       int    `json:"effective_bits"`
-	Language                   string `json:"language"`
-	DelayMS                    int64  `json:"delay_ms"`
-	ContentEncodingUnsupported bool   `json:"content_encoding_unsupported,omitempty"`
+	Path   string `json:"path"`
+	Stream Stream `json:"stream"`
+	Rate   int    `json:"sample_rate"`
+	Bits   int    `json:"effective_bits"`
+	// Container naming metadata does not change decoded PCM. DelayMS is a
+	// signed offset from the original timeline's zero, not encoder padding.
+	Language string `json:"language"`
+	DelayMS  int64  `json:"delay_ms"`
+	// A header-level incompatibility takes precedence over codec/profile
+	// checks; such inventory entries may lack probe-derived rate or precision.
+	ContentEncodingUnsupported bool `json:"content_encoding_unsupported,omitempty"`
 }
 
 // OutputBase shares automatic naming between CLI and desktop. Container text
 // is untrusted: only short ASCII language codes can become filename components.
+// It returns no extension; callers append each requested format independently.
 func (i Info) OutputBase() string {
 	base := strings.TrimSuffix(filepath.Base(i.Path), filepath.Ext(i.Path))
 	if !strings.EqualFold(filepath.Ext(i.Path), ".mkv") {

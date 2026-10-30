@@ -23,6 +23,8 @@ type Track struct {
 
 // ProbeTracks lists audio streams without requiring that every codec can be
 // converted. Unsupported tracks remain visible so the user can identify them.
+// Header-blocked audio may have incomplete format fields; its explicit policy
+// flag must be evaluated before treating those fields as a supported source.
 func ProbeTracks(ctx context.Context, path string) ([]Track, error) {
 	if err := Check(ctx); err != nil {
 		return nil, err

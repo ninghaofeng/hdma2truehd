@@ -67,6 +67,8 @@ func hdmaGoLog(handle C.uintptr_t, level C.int, message *C.char) {
 		ctx = logContext.ctx
 		logContext.RUnlock()
 	}
+	// Diagnostics are not the operation's return value. FFmpeg may log an
+	// error yet return success; result converts actual failure codes separately.
 	severity := "warning"
 	if level <= C.AV_LOG_ERROR {
 		severity = "error"
@@ -74,6 +76,9 @@ func hdmaGoLog(handle C.uintptr_t, level C.int, message *C.char) {
 	diagnostic.Emit(ctx, diagnostic.Event{Level: severity, Code: "ffmpeg", Message: strings.TrimSpace(C.GoString(message))})
 }
 
+// Info holds copied metadata for synchronous native operations. Codec/format fields are
+// processing constraints; language/delay and header-policy flags also support
+// inventory and naming, but are not a compressed-content fingerprint.
 type Info struct {
 	Index, Rate, Bits, Channels int
 	Codec, Profile, Layout      string

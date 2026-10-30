@@ -64,6 +64,8 @@ func TestDTSCoreAndMA51LossyOutputs(t *testing.T) {
 				} else if input != source {
 					wantRate = 1024000
 				}
+				// Use the encoded sample geometry, including padding, rather
+				// than a container duration estimate to prove the fixed bitrate.
 				if uint64(len(data))*8*48000 != wantRate*result.DecodedSamples {
 					t.Fatalf("expected fixed bitrate %d, bytes=%d samples=%d", wantRate, len(data), result.DecodedSamples)
 				}
