@@ -39,7 +39,8 @@ func fixture(t *testing.T) string {
 		"patches/ffmpeg/0002-eac3-dependent-7.1.patch",
 		"patches/ffmpeg/0003-stream-info-discard.patch",
 		"patches/ffmpeg/0004-matroska-audio-scope.patch",
-		"docs/RELINKING.md", "go.mod", "go.sum", "goroot/LICENSE", "goroot/PATENTS",
+		"LICENSE", "docs/INSTALLATION.md", "docs/RELINKING.md",
+		"go.mod", "go.sum", "goroot/LICENSE", "goroot/PATENTS",
 		".backend/ffmpeg-8.0.1.tar.xz", "cmd/hdma2truehd-ui/Info.plist",
 		"cmd/hdma2truehd/main.go",
 		"cmd/hdma2truehd-ui/assets/app.icns", "cmd/hdma2truehd-ui/app.rc",
@@ -73,7 +74,18 @@ case "$1" in
             shift
         done
         mkdir -p "$(dirname "$output")"
-        printf '#!/usr/bin/env bash\nexit 0\n' > "$output"
+        cat > "$output" <<'APP'
+#!/usr/bin/env bash
+if [[ "${1:-}" == doctor ]]; then
+    mkdir -p "$(dirname "$0")/logs"
+    printf 'fixture\n' > "$(dirname "$0")/logs/hdma2truehd-fixture.jsonl"
+    printf 'previous\n' > "$(dirname "$0")/logs/hdma2truehd-fixture.jsonl.1"
+    if [[ -n "${TEST_EXTRA_LOG:-}" ]]; then
+        printf 'unrelated\n' > "$(dirname "$0")/logs/keep.txt"
+    fi
+fi
+exit 0
+APP
         chmod +x "$output"
         if [[ "$args" == *-extld=hdma2truehd-link-cc* ]]; then
             mkdir -p "$HDMA_RELINK_DIR"
@@ -117,6 +129,7 @@ exit "${TEST_WINDRES_EXIT:-0}"
 	t.Setenv("TEST_MINOS", "12.0")
 	t.Setenv("TEST_WINDRES_EXIT", "0")
 	t.Setenv("TEST_BUILD_FAIL", "")
+	t.Setenv("TEST_EXTRA_LOG", "")
 	return root
 }
 
@@ -160,6 +173,8 @@ func TestReleaseTargets(t *testing.T) {
 			exists(t, destination, "HDMA Converter.app/Contents/Resources/app.icns", ui)
 			exists(t, destination, "source/modules.txt", ui)
 			exists(t, destination, "source/ffmpeg-8.0.1-configured.tar.gz", true)
+			exists(t, destination, "LICENSE", true)
+			exists(t, destination, "INSTALLATION.md", true)
 			exists(t, destination, "source/patches/ffmpeg/0003-stream-info-discard.patch", true)
 			exists(t, destination, "source/patches/ffmpeg/0004-matroska-audio-scope.patch", true)
 			exists(t, destination, "hdma2truehd-link-cc", false)
@@ -199,6 +214,8 @@ func TestBinaryOnlyTargets(t *testing.T) {
 			exists(t, root, "bin/HDMA Converter.app/Contents/Info.plist", target != "cli")
 			exists(t, root, "bin/relink", false)
 			exists(t, root, "bin/source", false)
+			exists(t, root, "bin/LICENSE", false)
+			exists(t, root, "bin/INSTALLATION.md", false)
 			log, err := os.ReadFile(filepath.Join(root, "build.log"))
 			if err != nil {
 				t.Fatal(err)
@@ -248,6 +265,7 @@ func TestPlatformReleaseBoth(t *testing.T) {
 	} {
 		exists(t, root, release+"/"+name, true)
 	}
+	exists(t, root, release+"/logs", false)
 	log, err := os.ReadFile(filepath.Join(root, "build.log"))
 	if err != nil {
 		t.Fatal(err)
@@ -261,6 +279,16 @@ func TestPlatformReleaseBoth(t *testing.T) {
 	exists(t, root, release+"/hdma2truehd-ui", true)
 	run(t, root, "build-common.sh", true, "macos", "--reuse-backend", "--clean")
 	exists(t, root, release+"/relink-ui/relink.sh", true)
+}
+
+func TestReleaseDiagnosticCleanupPreservesUnrelatedFiles(t *testing.T) {
+	root := fixture(t)
+	t.Setenv("TEST_EXTRA_LOG", "1")
+	run(t, root, "build-common.sh", false, "macos", "--reuse-backend")
+	release := "dist/hdma2truehd-darwin-amd64"
+	exists(t, root, release+"/logs/keep.txt", true)
+	exists(t, root, release+"/logs/hdma2truehd-fixture.jsonl", false)
+	exists(t, root, release+"/logs/hdma2truehd-fixture.jsonl.1", false)
 }
 
 func TestFailedUIBuild(t *testing.T) {

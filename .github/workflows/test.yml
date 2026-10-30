@@ -143,6 +143,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: hdma2truehd-*
@@ -166,6 +167,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
+          body_path: docs/RELEASE-NOTES.md
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: assets/*

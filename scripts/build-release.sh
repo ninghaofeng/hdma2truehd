@@ -182,6 +182,8 @@ fi
 # A static binary alone is not the complete release: package licenses,
 # corresponding FFmpeg sources/patches and the inputs needed to relink it.
 mkdir -p "$destination/licenses" "$destination/source/patches/ffmpeg" "$destination/source/scripts"
+cp LICENSE "$destination/"
+cp docs/INSTALLATION.md "$destination/"
 cp patches/ffmpeg/COPYING.LGPLv2.1 "$destination/licenses/"
 cp patches/ffmpeg/README.md "$destination/licenses/FFmpeg-NOTICE.md"
 cp "$(go env GOROOT)/LICENSE" "$destination/licenses/Go-LICENSE"

@@ -68,7 +68,10 @@ GitHub Actions 在普通提交和 PR 上构建、测试并上传四份完整发�
 macOS 使用 `.tar.gz` 保留执行权限，Windows 使用 `.zip`，
 命名为 `hdma2truehd-v1.0.0-<os>-<arch>`，附每份归档的 `.sha256` 和汇总 `SHA256SUMS`。
 归档包含 CLI、UI、FFmpeg 源码、许可证和两套重新链接材料；
-当前流水线不执行代码签名或 macOS 公证。
+当前流水线不执行发布者身份签名或 macOS 公证；工具链生成的 ad-hoc 签名不证明发布者身份。
+下载校验及首次启动提示见 [下载与启动](docs/INSTALLATION.md)；
+草稿 Release 使用 [中英文发布说明](docs/RELEASE-NOTES.md)，公开前完成
+[发布验收清单](docs/RELEASE-CHECKLIST.md)。
 
 ### 桌面界面（macOS / Windows）
 
@@ -627,7 +630,7 @@ bash dist/hdma2truehd-darwin-arm64/relink-ui/relink.sh
 - Go/cgo 可重新链接对象、FFmpeg 静态库、链接脚本、Windows 导出定义文件（如有），
   以及捕获的原始外部链接命令；重新链接不依赖 Go 临时构建目录。
 - FFmpeg 原始源码归档、补丁、配置后的完整源码、构建脚本和工具链信息。
-- LGPL、Go 许可证及 [重新链接说明](docs/RELINKING.md)。
+- 项目 MIT 许可证、第三方 LGPL/Go 等许可证、安装指南及 [重新链接说明](docs/RELINKING.md)。
 
 用户可以在相同平台/架构上替换兼容的 FFmpeg 静态库，再运行 `relink.sh`。
 不同 SDK 路径可能需要调整；ABI/头文件变化则需重新编译应用。
@@ -636,6 +639,9 @@ bash dist/hdma2truehd-darwin-arm64/relink-ui/relink.sh
 编码器补丁沿用上游文件的 LGPL 2.1-or-later 条款；版本、校验值和注意事项见
 [后端说明](patches/ffmpeg/README.md)。开源许可证不等同于 Dolby/DTS 商标、
 专利授权或产品认证。
+
+项目自身代码使用 [MIT 许可证](LICENSE)。FFmpeg、其补丁和其他第三方组件保留各自许可，
+不因项目使用 MIT 而重新授权。
 
 ---
 
@@ -717,7 +723,11 @@ public after acceptance. Mismatching tags fail. macOS uses `.tar.gz` to retain
 executable permissions; Windows uses `.zip`. Names follow
 `hdma2truehd-v1.0.0-<os>-<arch>`, with individual `.sha256` sidecars and aggregate
 `SHA256SUMS`. Archives include CLI, UI, FFmpeg sources, notices and both relinking
-kits. The workflow currently does not sign code or notarize macOS applications.
+kits. The workflow does not provide publisher identity signing or macOS
+notarization; toolchain-generated ad-hoc signatures do not identify a publisher.
+See [download and launch instructions](docs/INSTALLATION.md), the
+[bilingual release notes](docs/RELEASE-NOTES.md) used for the draft, and the
+[release acceptance checklist](docs/RELEASE-CHECKLIST.md) before publication.
 
 ### Desktop UI (macOS / Windows)
 
@@ -1417,7 +1427,8 @@ The release contains:
   Relinking does not depend on Go's temporary build directory.
 - The original FFmpeg source archive, patches, complete configured source tree,
   build scripts and toolchain information.
-- LGPL and Go licenses, plus [relinking instructions](docs/RELINKING.md).
+- The project's MIT license, third-party LGPL/Go and other notices, installation
+  instructions, plus [relinking instructions](docs/RELINKING.md).
 
 On the same platform/architecture, users can replace compatible FFmpeg libraries
 and run `relink.sh`. Different SDK paths may require adjustments; ABI/header
@@ -1428,3 +1439,7 @@ The encoder patches follow the upstream files' LGPL 2.1-or-later terms.
 See the [backend notes](patches/ffmpeg/README.md) for versions, checksums and
 caveats. Open-source licensing is separate from Dolby/DTS trademarks, patent
 permissions and product certification.
+
+The project's own code is covered by the [MIT license](LICENSE). FFmpeg,
+its patches and other third-party components retain their own licenses;
+the project's MIT license does not relicense them.
