@@ -98,7 +98,7 @@ static void close_operation(Operation *op)
     av_channel_layout_uninit(&op->layout);
 }
 
-static int open_container(Operation *op, const char *path)
+static int open_container(Operation *op, const char *path, int index, int inventory)
 {
     int ret;
     op->stage = "open input";
@@ -117,6 +117,26 @@ static int open_container(Operation *op, const char *path)
     av_dict_free(&options);
     if (ret < 0)
         return ret;
+    /* Matroska headers already expose global stream indices/types. Set the
+     * scope before probing packets: inventory needs audio only; processing
+     * needs exactly the selected audio. Never renumber or hide audio entries. */
+    if (!inventory) {
+        op->stage = "select audio stream (containers require an explicit stream index)";
+        if (index < 0) {
+            if (op->input->nb_streams != 1)
+                return AVERROR_INVALIDDATA;
+            index = 0;
+        }
+        if ((unsigned)index >= op->input->nb_streams ||
+            op->input->streams[index]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO)
+            return AVERROR_INVALIDDATA;
+        op->stream_index = index;
+    }
+    for (unsigned i = 0; i < op->input->nb_streams; i++) {
+        AVStream *stream = op->input->streams[i];
+        stream->discard = stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
+            (inventory || i == (unsigned)op->stream_index) ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
+    }
     op->stage = "read stream information";
     if ((ret = avformat_find_stream_info(op->input, NULL)) < 0)
         return ret;
@@ -125,22 +145,11 @@ static int open_container(Operation *op, const char *path)
 
 static int open_input(Operation *op, const char *path, int index)
 {
-    int ret = open_container(op, path);
+    int ret = open_container(op, path, index, 0);
     if (ret < 0)
         return ret;
-    op->stage = "select audio stream (containers require an explicit stream index)";
-    /* Preserve the original single-stream contract when no index is supplied.
-     * An explicit selection never falls back to another/default audio track. */
-    if (index < 0) {
-        if (op->input->nb_streams != 1)
-            return AVERROR_INVALIDDATA;
-        index = 0;
-    }
-    if ((unsigned)index >= op->input->nb_streams ||
-        op->input->streams[index]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO)
-        return AVERROR_INVALIDDATA;
-    op->stream_index = index;
-    AVCodecParameters *par = op->input->streams[index]->codecpar;
+    op->stage = "validate selected audio stream";
+    AVCodecParameters *par = op->input->streams[op->stream_index]->codecpar;
     if (par->codec_id == AV_CODEC_ID_NONE || par->sample_rate <= 0 ||
         !av_channel_layout_check(&par->ch_layout))
         return AVERROR_INVALIDDATA;
@@ -157,6 +166,15 @@ static int describe_stream(AVStream *stream, HDMAInfo *info)
     info->channels = par->ch_layout.nb_channels;
     snprintf(info->codec, sizeof(info->codec), "%s", avcodec_get_name(par->codec_id));
     snprintf(info->profile, sizeof(info->profile), "%s", profile ? profile : "");
+    AVDictionaryEntry *language = av_dict_get(stream->metadata, "language", NULL, 0);
+    snprintf(info->language, sizeof(info->language), "%s", language ? language->value : "");
+    info->delay_ms = 0;
+    if (stream->start_time != AV_NOPTS_VALUE) {
+        /* Preserve the original timeline offset. input->start_time depends on
+         * the probe scope and would erase a selected track's positive delay.
+         * av_rescale_q rounds to nearest, with ties away from zero. */
+        info->delay_ms = av_rescale_q(stream->start_time, stream->time_base, (AVRational){1, 1000});
+    }
     return av_channel_layout_describe(&par->ch_layout, info->layout, sizeof(info->layout));
 }
 
@@ -188,7 +206,7 @@ int hdma_probe_tracks(const char *path, uintptr_t handle, HDMATrack **tracks,
     Operation op = {.handle = handle};
     *tracks = NULL;
     *count = 0;
-    int ret = open_container(&op, path);
+    int ret = open_container(&op, path, -1, 1);
     if (ret < 0)
         goto end;
     op.stage = "enumerate audio streams";
@@ -210,9 +228,7 @@ int hdma_probe_tracks(const char *path, uintptr_t handle, HDMATrack **tracks,
         HDMATrack *track = &(*tracks)[(*count)++];
         if ((ret = describe_stream(stream, &track->info)) < 0)
             goto end;
-        AVDictionaryEntry *language = av_dict_get(stream->metadata, "language", NULL, 0);
         AVDictionaryEntry *title = av_dict_get(stream->metadata, "title", NULL, 0);
-        snprintf(track->language, sizeof(track->language), "%s", language ? language->value : "");
         snprintf(track->title, sizeof(track->title), "%s", title ? title->value : "");
         track->is_default = !!(stream->disposition & AV_DISPOSITION_DEFAULT);
         /* This fallback is for display only. Verification counts decoded PCM

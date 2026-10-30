@@ -49,7 +49,7 @@ func ProbeTracks(ctx context.Context, path string) ([]Track, error) {
 	for _, track := range unsafe.Slice(tracks, int(count)) {
 		found = append(found, Track{
 			Info:     nativeMetadata(track.info),
-			Language: strings.ToValidUTF8(C.GoString(&track.language[0]), "\uFFFD"),
+			Language: strings.ToValidUTF8(C.GoString(&track.info.language[0]), "\uFFFD"),
 			Title:    strings.ToValidUTF8(C.GoString(&track.title[0]), "\uFFFD"),
 			Default:  track.is_default != 0,
 			Duration: float64(track.duration_us) / 1e6,

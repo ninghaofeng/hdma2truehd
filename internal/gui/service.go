@@ -276,12 +276,7 @@ func (s *Service) plan(ctx context.Context, req Request) ([]Job, error) {
 		if dir == "" {
 			dir = filepath.Dir(info.Path)
 		}
-		base := strings.TrimSuffix(filepath.Base(info.Path), filepath.Ext(info.Path))
-		// Track indices disambiguate multiple selections from the same MKV.
-		// Titles/languages are display metadata, never trusted as output paths.
-		if strings.EqualFold(filepath.Ext(info.Path), ".mkv") {
-			base += fmt.Sprintf(".track-%d", selected.Index)
-		}
+		base := info.OutputBase()
 		for _, format := range []string{"thd", "eac3", "ac3"} {
 			if (format == "thd" && !req.TrueHD) || (format == "eac3" && !req.EAC3) || (format == "ac3" && !req.AC3) {
 				continue

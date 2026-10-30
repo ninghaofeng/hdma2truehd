@@ -54,6 +54,9 @@ Raw AC-3/E-AC-3 retains 256 samples of encoder delay plus padding to 1536-sample
 Lossy validation checks complete decoding, format and length, not PCM equality.
 DTS:X/IMAX uses compatible 5.1/7.1 channels only, without object rendering or metadata.
 Use "probe --list-tracks INPUT.mkv" to list container audio tracks.
+Automatic MKV names: NAME_trackINDEX_[LANG]_DELAY Nms.thd/.eac3/.ac3.
+INDEX is the zero-based global stream index; missing language uses und.
+DELAY records the container timeline offset only; -o keeps your explicit name.
 No upmixing, downmixing, resampling, Atmos, or MKV output/remuxing.
 `
 
@@ -221,7 +224,12 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "--eac3-bitrate requires an E-AC-3 output; use 0 for automatic or 384..1536 kb/s in steps of 32 (layout limits also apply)")
 		return 2
 	}
-	jobs, err := planJobs(flags.Args(), output, outputDir, format)
+	jobs, err := planJobs(flags.Args(), output, outputDir, format, func(path string) (audio.Info, error) {
+		if streamIndex >= 0 {
+			return backend.ProbeStream(ctx, path, streamIndex)
+		}
+		return backend.Probe(ctx, path)
+	})
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 2
@@ -371,7 +379,7 @@ func outputFormats(format string) ([]string, error) {
 	return formats, nil
 }
 
-func planJobs(inputs []string, output, outputDir, format string) ([]job, error) {
+func planJobs(inputs []string, output, outputDir, format string, probe func(string) (audio.Info, error)) ([]job, error) {
 	formats, err := outputFormats(format)
 	if err != nil {
 		return nil, err
@@ -400,6 +408,17 @@ func planJobs(inputs []string, output, outputDir, format string) ([]job, error) 
 		if strings.HasPrefix(input, "-") {
 			return nil, fmt.Errorf("options must precede input paths; prefix a filename starting with '-' with './'")
 		}
+		base := strings.TrimSuffix(filepath.Base(input), filepath.Ext(input))
+		if output == "" && strings.EqualFold(filepath.Ext(input), ".mkv") {
+			if probe == nil {
+				return nil, fmt.Errorf("%s: MKV naming requires audio stream metadata", input)
+			}
+			info, err := probe(input)
+			if err != nil {
+				return nil, fmt.Errorf("%s: probe MKV naming metadata: %w", input, err)
+			}
+			base = info.OutputBase()
+		}
 		for _, selected := range formats {
 			extension := ".thd"
 			if selected != "truehd" {
@@ -411,7 +430,7 @@ func planJobs(inputs []string, output, outputDir, format string) ([]job, error) 
 				if outputDir != "" {
 					dir = outputDir
 				}
-				destination = filepath.Join(dir, strings.TrimSuffix(filepath.Base(input), filepath.Ext(input))+extension)
+				destination = filepath.Join(dir, base+extension)
 			}
 			if !strings.EqualFold(filepath.Ext(destination), extension) {
 				return nil, fmt.Errorf("%s output must use %s extension", selected, extension)

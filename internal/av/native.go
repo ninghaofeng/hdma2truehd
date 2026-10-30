@@ -30,7 +30,7 @@ import (
 
 // Version rejects an accidentally linked stock/incompatible backend. The marker
 // identifies the required patches, but is not a cryptographic provenance check.
-const Version = "8.0.1-hdma2truehd-71-v4"
+const Version = "8.0.1-hdma2truehd-71-v5"
 
 var loggingOnce sync.Once
 var logContext = struct {
@@ -77,6 +77,8 @@ func hdmaGoLog(handle C.uintptr_t, level C.int, message *C.char) {
 type Info struct {
 	Index, Rate, Bits, Channels int
 	Codec, Profile, Layout      string
+	Language                    string
+	DelayMS                     int64
 }
 
 // operation stays reachable through a cgo.Handle for the entire synchronous C
@@ -160,6 +162,7 @@ func nativeMetadata(info C.HDMAInfo) Info {
 	return Info{
 		Index: int(info.index), Rate: int(info.rate), Bits: int(info.bits), Channels: int(info.channels),
 		Codec: C.GoString(&info.codec[0]), Profile: C.GoString(&info.profile[0]), Layout: C.GoString(&info.layout[0]),
+		Language: strings.ToValidUTF8(C.GoString(&info.language[0]), "\uFFFD"), DelayMS: int64(info.delay_ms),
 	}
 }
 

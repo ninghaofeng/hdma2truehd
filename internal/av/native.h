@@ -16,6 +16,8 @@ typedef struct HDMAInfo {
     char codec[64];
     char profile[64];
     char layout[128];
+    char language[64];
+    int64_t delay_ms;
 } HDMAInfo;
 
 const char *hdma_version(void);
@@ -27,7 +29,6 @@ const char *hdma_error_kind(int code);
 int hdma_probe(const char *path, uintptr_t handle, HDMAInfo *info, char *error);
 typedef struct HDMATrack {
     HDMAInfo info;
-    char language[64];
     char title[512];
     int is_default;
     int64_t duration_us;

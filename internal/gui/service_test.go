@@ -189,7 +189,7 @@ func TestPlanning(t *testing.T) {
 		t.Fatalf("%+v %v", jobs, err)
 	}
 
-	if !strings.HasSuffix(jobs[0].Output, "movie.track-2.thd") || !strings.HasSuffix(jobs[3].Output, "movie.track-4.eac3") {
+	if !strings.HasSuffix(jobs[0].Output, "movie_track2_[und]_DELAY 0ms.thd") || !strings.HasSuffix(jobs[3].Output, "movie_track4_[und]_DELAY 0ms.eac3") {
 		t.Fatalf("%+v", jobs)
 	}
 	for _, bad := range []Request{
@@ -214,6 +214,33 @@ func TestPlanning(t *testing.T) {
 	request.Overwrite = true
 	if _, err := s.plan(t.Context(), request); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMKVOutputMetadata(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "test_video.mkv")
+	s := New(fakeBackend{probe: func(path string, index int) (audio.Info, error) {
+		info, err := (fakeBackend{}).ProbeStream(t.Context(), path, index)
+		info.Stream.Layout, info.Stream.Channels = "5.1(side)", 6
+		info.Language, info.DelayMS = "eng", -125
+		return info, err
+	}}, nil)
+	req := Request{Tracks: []Selection{{input, 2}}, TrueHD: true, EAC3: true, AC3: true}
+	jobs, err := s.plan(t.Context(), req)
+	if err != nil || len(jobs) != 3 {
+		t.Fatalf("%+v %v", jobs, err)
+	}
+	for i, extension := range []string{".thd", ".eac3", ".ac3"} {
+		if jobs[i].Output != filepath.Join(dir, "test_video_track2_[eng]_DELAY -125ms"+extension) {
+			t.Fatalf("%+v", jobs)
+		}
+	}
+	outputDir := t.TempDir()
+	req.OutputDir = outputDir
+	jobs, err = s.plan(t.Context(), req)
+	if err != nil || filepath.Dir(jobs[0].Output) != outputDir {
+		t.Fatalf("%+v %v", jobs, err)
 	}
 }
 

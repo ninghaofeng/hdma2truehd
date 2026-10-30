@@ -22,13 +22,30 @@ presentation uses both substreams. No new 5.1 downmix presentation is generated
 for 7.1, and no Dolby Digital companion/core stream is generated.
 
 The Go tool checks the linked library's build marker
-`8.0.1-hdma2truehd-71-v4`. Version 3 enabled the Matroska demuxer for explicitly
+`8.0.1-hdma2truehd-71-v5`. Version 3 enabled the Matroska demuxer for explicitly
 selected MKV audio tracks, without enabling video decoding. Version 4 also
 enables stock AC-3 encoding/decoding and raw AC-3 muxing/demuxing. Rebuild older
 static libraries; adding AC-3 does not require another upstream codec patch.
+Version 5 makes stream-info probing respect explicitly discarded tracks,
+as described below.
 This marker is a version check, not cryptographic
 provenance or a substitute for testing. `doctor` performs actual in-process
 24-bit PCM round trips for each supported layout.
+
+## Stream-info isolation patch
+
+`0003-stream-info-discard.patch` makes `avformat_find_stream_info` honor
+`AVDISCARD_ALL` when opening probe codecs, deciding whether probing is complete,
+performing EOF/parameter analysis and reporting missing codec parameters.
+Stock 8.0.1 can still report unknown codecs for discarded MKV attachments.
+
+The bridge sets discard flags after container headers and before probing:
+inventory enables all audio tracks, while selected-track probing and decoding
+enable only the requested audio stream. Global indices and unsupported audio
+inventory entries are preserved. Video, subtitle and attachment codecs are
+not requirements for converting the selected audio. No log-text filters or
+global warning suppression are used; selected audio and container errors
+still propagate.
 
 ## E-AC-3 dependent-substream patch
 

@@ -10,6 +10,32 @@ import (
 	"github.com/ninghaofeng/hdma2truehd/internal/av"
 )
 
+func TestOutputBase(t *testing.T) {
+	for _, tt := range []struct {
+		path, language string
+		index          int
+		delay          int64
+		want           string
+	}{
+		{"test_video.mkv", "eng", 2, 0, "test_video_track2_[eng]_DELAY 0ms"},
+		{"movie.part1.MKV", " JPN ", 4, 125, "movie.part1_track4_[jpn]_DELAY 125ms"},
+		{"movie.mkv", "zh", 0, -250, "movie_track0_[zh]_DELAY -250ms"},
+		{"movie.mkv", "", 0, 0, "movie_track0_[und]_DELAY 0ms"},
+		{"movie.mkv", "../../bad", 2, 0, "movie_track2_[und]_DELAY 0ms"},
+		{"movie.mkv", "e/g", 2, 0, "movie_track2_[und]_DELAY 0ms"},
+		{"movie.mkv", "eng\\bad", 2, 0, "movie_track2_[und]_DELAY 0ms"},
+		{"movie.mkv", "e\x00g", 2, 0, "movie_track2_[und]_DELAY 0ms"},
+		{"movie.mkv", "english", 2, 0, "movie_track2_[und]_DELAY 0ms"},
+		{"movie.dts", "eng", 2, 125, "movie"},
+		{"movie.dtshd", "", 0, 0, "movie"},
+	} {
+		info := Info{Path: filepath.Join(t.TempDir(), tt.path), Stream: Stream{Index: tt.index}, Language: tt.language, DelayMS: tt.delay}
+		if got := info.OutputBase(); got != tt.want {
+			t.Errorf("%+v: %q, want %q", tt, got, tt.want)
+		}
+	}
+}
+
 func TestOutputPolicies(t *testing.T) {
 	for _, test := range []struct {
 		profile, layout   string

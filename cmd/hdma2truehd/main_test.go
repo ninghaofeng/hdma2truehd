@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,11 +16,41 @@ import (
 	"github.com/ninghaofeng/hdma2truehd/internal/buildinfo"
 )
 
+func TestMKVOutputPlanning(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "test_video.mkv")
+	calls := 0
+	probe := func(path string) (audio.Info, error) {
+		calls++
+		return audio.Info{Path: path, Stream: audio.Stream{Index: 2}, Language: "eng", DelayMS: 125}, nil
+	}
+	jobs, err := planJobs([]string{input}, "", dir, "all", probe)
+	if err != nil || len(jobs) != 3 || calls != 1 {
+		t.Fatalf("%+v %v, probe calls %d", jobs, err, calls)
+	}
+	for i, extension := range []string{".thd", ".eac3", ".ac3"} {
+		if jobs[i].output != filepath.Join(dir, "test_video_track2_[eng]_DELAY 125ms"+extension) {
+			t.Fatalf("%+v", jobs)
+		}
+	}
+	custom := filepath.Join(dir, "custom.thd")
+	jobs, err = planJobs([]string{input}, custom, "", "truehd", probe)
+	if err != nil || len(jobs) != 1 || jobs[0].output != custom || calls != 1 {
+		t.Fatalf("explicit output changed: %+v %v, calls %d", jobs, err, calls)
+	}
+	failure := errors.New("metadata read failed")
+	if _, err := planJobs([]string{input}, "", "", "truehd", func(string) (audio.Info, error) {
+		return audio.Info{}, failure
+	}); !errors.Is(err, failure) {
+		t.Fatalf("probe failure hidden: %v", err)
+	}
+}
+
 func TestPlanJobs(t *testing.T) {
 	dir := t.TempDir()
 	a := filepath.Join(dir, "a.dts")
 	b := filepath.Join(dir, "b.dts")
-	jobs, err := planJobs([]string{a, b}, "", dir, "truehd")
+	jobs, err := planJobs([]string{a, b}, "", dir, "truehd", nil)
 	if err != nil || len(jobs) != 2 || jobs[0].output != filepath.Join(dir, "a.thd") {
 		t.Fatalf("%+v %v", jobs, err)
 	}
@@ -37,7 +68,7 @@ func TestPlanJobs(t *testing.T) {
 		{[]string{a, filepath.Join(dir, "a.thd")}, "", dir},
 		{[]string{a, "--skip-verify"}, "", ""},
 	} {
-		if _, err := planJobs(tt.inputs, tt.output, tt.dir, "truehd"); err == nil {
+		if _, err := planJobs(tt.inputs, tt.output, tt.dir, "truehd", nil); err == nil {
 			t.Fatalf("accepted invalid job specification %+v", tt)
 		}
 	}
@@ -54,7 +85,7 @@ func TestPlanJobsHardLink(t *testing.T) {
 	if err := os.Link(input, output); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := planJobs([]string{input}, output, "", "truehd"); err == nil {
+	if _, err := planJobs([]string{input}, output, "", "truehd", nil); err == nil {
 		t.Fatal("accepted output aliasing an input")
 	}
 }
@@ -62,11 +93,11 @@ func TestPlanJobsHardLink(t *testing.T) {
 func TestOutputFormats(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "source.dts")
-	jobs, err := planJobs([]string{input}, "", dir, "both")
+	jobs, err := planJobs([]string{input}, "", dir, "both", nil)
 	if err != nil || len(jobs) != 2 || filepath.Ext(jobs[0].output) != ".thd" || filepath.Ext(jobs[1].output) != ".eac3" {
 		t.Fatalf("wrong dual-format jobs: %+v %v", jobs, err)
 	}
-	jobs, err = planJobs([]string{input}, filepath.Join(dir, "custom.eac3"), "", "eac3")
+	jobs, err = planJobs([]string{input}, filepath.Join(dir, "custom.eac3"), "", "eac3", nil)
 	if err != nil || len(jobs) != 1 {
 		t.Fatalf("wrong E-AC-3 job: %+v %v", jobs, err)
 	}
@@ -75,7 +106,7 @@ func TestOutputFormats(t *testing.T) {
 		{"", ""}, {"", "eac3,eac3"}, {"", "truehd,thd"}, {"", "eac3,"},
 		{"output.ac3", "eac3,ac3"}, {"output.thd", "all"}, {"output.eac3", "ac3"},
 	} {
-		if _, err := planJobs([]string{input}, tt.output, "", tt.format); err == nil {
+		if _, err := planJobs([]string{input}, tt.output, "", tt.format, nil); err == nil {
 			t.Fatalf("accepted %+v", tt)
 		}
 	}
@@ -103,7 +134,7 @@ func TestAC3FormatPlanning(t *testing.T) {
 		{"thd", []string{".thd"}},
 		{"all", []string{".thd", ".eac3", ".ac3"}},
 	} {
-		jobs, err := planJobs([]string{input}, "", dir, tt.format)
+		jobs, err := planJobs([]string{input}, "", dir, tt.format, nil)
 		if err != nil || len(jobs) != len(tt.extensions) {
 			t.Fatalf("%s: %+v %v", tt.format, jobs, err)
 		}

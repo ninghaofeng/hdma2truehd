@@ -74,13 +74,16 @@ macOS 使用 `.tar.gz` 保留执行权限，Windows 使用 `.zip`，
 
 - 批量选择或拖入 `.dts`、`.dtshd`、`.mkv`，直接读取本地文件，不上传或复制整部 MKV。
 - MKV 展示音轨索引、语言、标题、格式、声道和时长；手动勾选一条或多条音轨。
+  枚举只探测音频轨道；转换和源 PCM 校验只处理所选音轨，跳过视频、字幕、
+  附件及其他未选轨道的 codec 探测。目标音轨损坏或容器读取失败仍明确报错，
+  不会通过全局屏蔽 FFmpeg 警告掩盖问题。
   普通 DTS 5.1 可选择有损输出；HRA 和其他不支持音轨仍显示但不可转换。
   不兼容原因按界面语言显示，并随所选输出格式更新；仅 E-AC-3 不兼容时，
   可取消 E-AC-3、保留 TrueHD。存在不兼容的已选音轨时不能开始转换。
 - TrueHD、E-AC-3 与 AC-3 可组合勾选；桌面端默认仍勾选前两种，AC-3 默认关闭，CLI 默认仍仅 TrueHD。
   E-AC-3 的 5.1 / 7.1 码率可分别选择自动或预设值，混合队列按音轨布局使用对应设置；
   MA 自动为 5.1 **960 kb/s**、7.1 **1536 kb/s**；普通 DTS 固定 **1024 kb/s**。
-- 可选输出目录，留空时与源文件同目录；MKV 输出使用 `电影名.track-索引.thd/.eac3/.ac3`
+- 可选输出目录，留空时与源文件同目录；MKV 输出使用 `电影名_track索引_[语言]_DELAY 延迟ms.thd/.eac3/.ac3`
   避免同一电影的不同音轨互相覆盖。覆盖已有文件需要显式勾选。
 - 并行队列默认同时处理 **2** 项任务，可选 **1–8**，选择 1 即为串行。
   同一文件的多个音轨、不同格式输出也可并行；每项输出独立校验与发布。
@@ -93,7 +96,7 @@ macOS 使用 `.tar.gz` 保留执行权限，Windows 使用 `.zip`，
 - 仅生成独立音频文件，不封装回 MKV、不解码视频或字幕，也不解析 DTS:X 对象。
 
 下文的平台构建入口默认同时生成 CLI 和 UI，并打包到同一发布目录。
-如果已经构建好本机 **v4** FFmpeg 后端，也可直接打包：
+如果已经构建好本机 **v5** FFmpeg 后端，也可直接打包：
 
 ```bash
 # macOS 终端 / Windows MSYS2 UCRT64 或 CLANGARM64 终端
@@ -132,8 +135,15 @@ hdma2truehd probe --list-tracks movie.mkv
 hdma2truehd convert --stream 2 --format both movie.mkv
 ```
 
-`--stream` 仅用于单个输入；CLI 默认命名仍为 `movie.thd/.eac3/.ac3`，
-转换同一 MKV 的不同音轨时请使用不同输出目录或单格式 `-o`。
+`--stream` 仅用于单个输入；CLI 和桌面端的 MKV 自动命名统一为
+`原文件名_track{索引}_[{语言缩写}]_DELAY {延迟毫秒}ms.thd/.eac3/.ac3`，
+例如 `test_video_track2_[eng]_DELAY 0ms.thd`。
+索引为从 **0** 开始的容器全局索引（包含视频、字幕的位置）。
+语言使用 MKV 标签的小写两字母或三字母代码，缺失或无效时使用 `und`。
+延迟取音轨起始时间戳相对 MKV 原始时间轴 **0 点** 的偏移，四舍五入为整数毫秒；
+保留负值，缺失时间戳时记为 `0ms`。该字段只记录偏移，不插入静音或调整音频，
+也不包含新增的 AC-3/E-AC-3 编码延迟。CLI 显式指定的 `-o` 不会被自动改名；
+裸 DTS/DTS-HD 输入继续使用原文件名加输出扩展名。
 未明确选择时，多轨容器会被拒绝，不会自动选取默认音轨。
 
 ### 架构
@@ -230,8 +240,8 @@ SHA-256 校验工具。FFmpeg 构建脚本只生成静态库，不编译命令�
 替换静态库后应使用 `go build -a` / `go test -a` 强制重新链接，避免 Go 缓存
 继续使用外部库的旧版本。
 
-**旧后端升级：** AC-3 支持要求版本标记 `8.0.1-hdma2truehd-71-v4`。
-旧的 `v1` / `v2` / `v3` 静态库不能复用来构建此版本；先将 `.backend/ffmpeg-8.0.1/`
+**旧后端升级：** MKV 轨道隔离要求版本标记 `8.0.1-hdma2truehd-71-v5`。
+旧的 `v1` / `v2` / `v3` / `v4` 静态库不能复用来构建此版本；先将 `.backend/ffmpeg-8.0.1/`
 重命名为一个尚未占用的备份目录，再执行不带 `--reuse-backend` / `-ReuseBackend`
 的完整平台构建。不要仅执行 `--binary-only`；程序会拒绝旧版本后端。
 
@@ -706,6 +716,10 @@ kits. The workflow currently does not sign code or notarize macOS applications.
   and durations. Explicitly select one or more audio tracks. Unsupported tracks
   remain visible; ordinary DTS 5.1 supports lossy outputs, while HRA and other
   unsupported tracks remain disabled.
+  Inventory probes audio only; conversion and source PCM verification probe
+  and process only the selected audio track. Video, subtitle, attachment and
+  unselected-track codecs are excluded. Selected audio corruption and container
+  read failures still report errors; FFmpeg warnings are not globally suppressed.
   Reasons use the interface language and update with selected output formats.
   If only E-AC-3 is incompatible, deselect it to retain TrueHD. Incompatible
   selected tracks block conversion until the selection or formats are changed.
@@ -715,7 +729,7 @@ kits. The workflow currently does not sign code or notarize macOS applications.
   for 5.1 and 7.1; mixed queues use each track's layout-specific setting.
   Automatic is **960 kb/s for 5.1**, **1536 kb/s for 7.1**.
 - Choose an output directory or leave it empty to use each source directory.
-  MKV outputs use `movie.track-INDEX.thd/.eac3/.ac3` to distinguish selected tracks.
+  MKV outputs use `movie_trackINDEX_[LANG]_DELAY Nms.thd/.eac3/.ac3` to distinguish selected tracks.
   Existing outputs require explicit overwrite permission.
 - The queue defaults to **2** concurrent jobs, adjustable from **1–8**; choose
   1 for serial operation. Tracks and different output formats from the same
@@ -734,7 +748,7 @@ kits. The workflow currently does not sign code or notarize macOS applications.
   decoding or DTS:X object rendering is added.
 
 The platform build entry points below now build CLI and UI into one release by
-default. With an existing native **v4** FFmpeg backend, package them directly:
+default. With an existing native **v5** FFmpeg backend, package them directly:
 
 ```bash
 # macOS terminal / Windows MSYS2 UCRT64 or CLANGARM64 terminal
@@ -776,10 +790,19 @@ hdma2truehd probe --list-tracks movie.mkv
 hdma2truehd convert --stream 2 --format both movie.mkv
 ```
 
-`--stream` accepts one input only. CLI output naming remains `movie.thd/.eac3/.ac3`;
-use separate output directories or single-format `-o` when converting multiple
-tracks from the same MKV. Multi-track containers without explicit selection
-are rejected, never silently mapped to a default track.
+`--stream` accepts one input only. CLI and desktop automatic MKV names follow
+`NAME_track{INDEX}_[{LANG}]_DELAY {N}ms.thd/.eac3/.ac3`,
+for example `test_video_track2_[eng]_DELAY 0ms.thd`.
+INDEX is the **zero-based global container stream index**, including video/subtitle
+positions. LANG is the lowercase two- or three-letter MKV language tag, or `und`
+when absent or invalid. N is the audio start timestamp relative to the original
+MKV timeline's **zero point**, rounded to the nearest millisecond; negative
+values are retained and missing timestamps use `0ms`. This only records the
+offset, without inserting silence or adjusting audio, and excludes newly added
+AC-3/E-AC-3 encoder delay. Explicit CLI `-o` names remain unchanged; raw DTS/DTS-HD
+inputs retain the original basename plus output extension.
+Multi-track containers without explicit selection are rejected, never silently
+mapped to a default track.
 
 ### Architecture
 
@@ -911,7 +934,7 @@ relinking rather than reusing a cached result linked against old external
 archives.
 
 **Upgrading an old backend:** This feature requires the marker
-`8.0.1-hdma2truehd-71-v4` for AC-3 support. Old `v1` / `v2` / `v3` static libraries cannot be reused.
+`8.0.1-hdma2truehd-71-v5` for MKV stream isolation. Old `v1` / `v2` / `v3` / `v4` static libraries cannot be reused.
 Rename `.backend/ffmpeg-8.0.1/` to an unused backup directory, then run a full
 platform build without `--reuse-backend` / `-ReuseBackend`. An executable-only
 build is insufficient; the program rejects the old backend.

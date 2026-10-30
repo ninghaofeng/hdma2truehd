@@ -188,7 +188,8 @@ cp "$(go env GOROOT)/LICENSE" "$destination/licenses/Go-LICENSE"
 cp "$(go env GOROOT)/PATENTS" "$destination/licenses/Go-PATENTS"
 cp docs/RELINKING.md "$destination/RELINKING.md"
 cp patches/ffmpeg/0001-truehd-7.1-and-short-streams.patch \
-    patches/ffmpeg/0002-eac3-dependent-7.1.patch "$destination/source/patches/ffmpeg/"
+    patches/ffmpeg/0002-eac3-dependent-7.1.patch \
+    patches/ffmpeg/0003-stream-info-discard.patch "$destination/source/patches/ffmpeg/"
 cp scripts/build-ffmpeg.sh "$destination/source/scripts/"
 cp scripts/build-env.sh "$destination/source/scripts/"
 if [[ "$build_target" != cli ]]; then

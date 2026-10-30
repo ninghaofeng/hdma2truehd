@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/ninghaofeng/hdma2truehd/internal/av"
 	"github.com/ninghaofeng/hdma2truehd/internal/diagnostic"
@@ -29,10 +30,30 @@ type Stream struct {
 // the conversion contract. Bits is reported effective precision, not internal
 // PCM storage width; ordinary DTS does not require MA's 16/24-bit invariant.
 type Info struct {
-	Path   string `json:"path"`
-	Stream Stream `json:"stream"`
-	Rate   int    `json:"sample_rate"`
-	Bits   int    `json:"effective_bits"`
+	Path     string `json:"path"`
+	Stream   Stream `json:"stream"`
+	Rate     int    `json:"sample_rate"`
+	Bits     int    `json:"effective_bits"`
+	Language string `json:"language"`
+	DelayMS  int64  `json:"delay_ms"`
+}
+
+// OutputBase shares automatic naming between CLI and desktop. Container text
+// is untrusted: only short ASCII language codes can become filename components.
+func (i Info) OutputBase() string {
+	base := strings.TrimSuffix(filepath.Base(i.Path), filepath.Ext(i.Path))
+	if !strings.EqualFold(filepath.Ext(i.Path), ".mkv") {
+		return base
+	}
+	language := strings.ToLower(strings.TrimSpace(i.Language))
+	valid := len(language) == 2 || len(language) == 3
+	for _, c := range language {
+		valid = valid && c >= 'a' && c <= 'z'
+	}
+	if !valid {
+		language = "und"
+	}
+	return fmt.Sprintf("%s_track%d_[%s]_DELAY %dms", base, i.Stream.Index, language, i.DelayMS)
 }
 
 func localFile(path string) (string, error) {
@@ -79,7 +100,7 @@ func fromNative(path string, info av.Info) Info {
 	stream := Stream{Index: info.Index, CodecType: "audio", Codec: info.Codec, Profile: info.Profile,
 		SampleRate: strconv.Itoa(info.Rate), Channels: info.Channels, Layout: info.Layout,
 		RawBits: strconv.Itoa(info.Bits)}
-	return Info{Path: path, Stream: stream, Rate: info.Rate, Bits: info.Bits}
+	return Info{Path: path, Stream: stream, Rate: info.Rate, Bits: info.Bits, Language: info.Language, DelayMS: info.DelayMS}
 }
 
 // Track adds display metadata to a probe result. Duration is seconds and may be
